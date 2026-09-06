@@ -1,0 +1,37 @@
+{
+    "name": "@benjosivo/automation",
+    "version": "1.0.0",
+    "description": "Runner de tâches planifiées : job, scheduler, executor, sur MySQL et Redis",
+    "type": "module",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "files": [
+        "dist",
+        "sql"
+    ],
+    "scripts": {
+        "build": "tsc",
+        "prepublishOnly": "npm run build"
+    },
+    "peerDependencies": {
+        "@benjosivo/mysql": "^1.2.0"
+    },
+    "dependencies": {
+        "cors": "^2.8.6",
+        "express": "^5.2.1",
+        "node-cron": "^4.2.1",
+        "redis": "^6.0.0"
+    },
+    "devDependencies": {
+        "@benjosivo/mysql": "^1.2.2",
+        "@types/cors": "^2.8.19",
+        "@types/express": "^5.0.6",
+        "@types/node": "^24.12.3",
+        "typescript": "^7.0.2"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/benjosivo/automation.git"
+    },
+    "license": "MIT"
+}
