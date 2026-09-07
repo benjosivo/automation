@@ -100,6 +100,20 @@ export async function getActiveSchedules(): Promise<AutomSchedule[]> {
     return assertRows<AutomSchedule>(result, 'getActiveSchedules');
 }
 
+/** Deliberately unscoped, for the same reason as getTaskById: the API has to read
+ *  a foreign schedule's row in order to recognise it as foreign and refuse it.
+ *  Runner comes from the parent task — a schedule has no runner of its own. */
+export async function getScheduleById(id: number): Promise<(AutomSchedule & { Runner: string }) | null> {
+    const result = await executeMySQLQuery2({
+        query: `SELECT s.*, t.Runner, t.Name AS TaskName
+                  FROM Autom_Schedule s
+                  JOIN Autom_Task t ON t.idAutom_Task = s.Autom_Task_id
+                 WHERE s.idAutom_Schedule = ?`,
+        values: [id],
+    });
+    return assertSingle<AutomSchedule & { Runner: string }>(result, 'getScheduleById');
+}
+
 export async function createSchedule(taskId: number, cronExpression: string, isActive: 0 | 1 = 1): Promise<number> {
     const result = (await executeMySQLQuery2({
         query: 'INSERT INTO Autom_Schedule (Autom_Task_id, CronExpression, isActive) VALUES (?, ?, ?)',
@@ -206,11 +220,13 @@ export async function getAllRuns(opts: { limit: number; statusFilter?: string; t
 
 export async function getRunsForTask(taskId: number, limit = 20): Promise<AutomTaskRun[]> {
     const result = await executeMySQLQuery2({
-        query: `SELECT * FROM Autom_Task_Run
-                 WHERE Autom_Task_id = ?
-              ORDER BY StartedAt DESC
+        query: `SELECT r.*, t.Name AS TaskName
+                  FROM Autom_Task_Run r
+                  JOIN Autom_Task t ON t.idAutom_Task = r.Autom_Task_id
+                 WHERE r.Autom_Task_id = ? AND t.Runner = ?
+              ORDER BY r.StartedAt DESC
                  LIMIT ?`,
-        values: [taskId.toString(), limit.toString()],
+        values: [taskId.toString(), runner(), limit.toString()],
     });
     return assertRows<AutomTaskRun>(result, 'getRunsForTask');
 }

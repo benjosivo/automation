@@ -24,6 +24,8 @@ export interface AutomSchedule {
     isActive: 0 | 1;
     CreatedAt: Date;
     UpdatedAt: Date;
+    /** Joined in by getAllSchedules(); absent from a bare row. */
+    TaskName?: string;
 }
 
 export interface AutomTaskRun {
@@ -31,12 +33,17 @@ export interface AutomTaskRun {
     Autom_Task_id: number;
     Autom_Schedule_id: number | null;
     Status: TaskStatus;
-    triggeredBy: TriggerSource;
+    /** PascalCase because the column is: sql/001 declares `TriggeredBy`, and rows
+     *  come back keyed by the column's own case. The lowercase spelling this field
+     *  carried until 1.1.0 was simply absent at run time. */
+    TriggeredBy: TriggerSource;
     Attempt: number;
     StartedAt: Date;
     FinishedAt: Date | null;
     ErrorMessage: string | null;
     Output: string | null;
+    /** Joined in by getAllRuns() and getRunningTasks(); absent from getRunsForTask(). */
+    TaskName?: string;
 }
 
 export interface AutomTaskLock {
@@ -94,6 +101,10 @@ export interface AutomationConfig {
      *  crons and mark the other's live runs as timed out on boot. */
     runner: string;
     port: number;
+    /** Interface the API binds to. Defaults to 0.0.0.0 — every interface, which is
+     *  what 1.0.x did unconditionally. This API has no auth layer of its own: a
+     *  runner driven only from its own machine belongs on 127.0.0.1. */
+    host?: string;
     mysql: MysqlOptions;
     redisUrl: string;
     /** Exact origins allowed by CORS. Empty or omitted allows none. */

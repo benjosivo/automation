@@ -1,10 +1,30 @@
 {
     "name": "@benjosivo/automation",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Runner de tâches planifiées : job, scheduler, executor, sur MySQL et Redis",
     "type": "module",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./cron": {
+            "types": "./dist/cron.d.ts",
+            "default": "./dist/cron.js"
+        },
+        "./proxy": {
+            "types": "./dist/proxy.d.ts",
+            "default": "./dist/proxy.js"
+        },
+        "./react": {
+            "types": "./dist/react/index.d.ts",
+            "default": "./dist/react/index.js"
+        },
+        "./sql/*": "./sql/*",
+        "./package.json": "./package.json"
+    },
     "files": [
         "dist",
         "sql"
@@ -14,7 +34,16 @@
         "prepublishOnly": "npm run build"
     },
     "peerDependencies": {
-        "@benjosivo/mysql": "^1.2.0"
+        "@benjosivo/mysql": "^1.2.0",
+        "react": ">=18"
+    },
+    "peerDependenciesMeta": {
+        "@benjosivo/mysql": {
+            "optional": true
+        },
+        "react": {
+            "optional": true
+        }
     },
     "dependencies": {
         "cors": "^2.8.6",
@@ -27,6 +56,8 @@
         "@types/cors": "^2.8.19",
         "@types/express": "^5.0.6",
         "@types/node": "^24.12.3",
+        "@types/react": "^19.2.18",
+        "react": "^19.2.8",
         "typescript": "^7.0.2"
     },
     "repository": {

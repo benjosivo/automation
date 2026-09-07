@@ -91,8 +91,8 @@ export async function startAutomationServer(config: AutomationConfig): Promise<v
 
     installShutdownHandlers();
 
-    app.listen(cfg().port, () => {
-        console.log(`[Boot] API listening on port ${cfg().port}`);
+    app.listen(cfg().port, cfg().host, () => {
+        console.log(`[Boot] API listening on ${cfg().host}:${cfg().port}`);
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     });
 }

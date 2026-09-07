@@ -1,3 +1,6 @@
 node_modules/
 dist/
 .env
+
+# Tarballs de npm pack, utilises pour tester chez les hotes avant publication.
+*.tgz
