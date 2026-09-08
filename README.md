@@ -69,7 +69,7 @@ Mounted under `/api` by `startAutomationServer`, plus an unauthenticated `/healt
 
 `POST /schedules` and `PATCH /schedules/:id` answer **400** on an expression that either node-cron or the five-field parser rejects. Before 1.1.0 an unusable expression was stored, listed as active, and never fired — `registerJob()` warned to the console and returned.
 
-**There is no auth layer**: every `/api` route is open. Bind it to the loopback with `host` and put an authenticated host in front of it — see below. The CORS allowlist only constrains browsers, never a server-to-server call.
+**There is no auth layer**: every `/api` route is open. Restrict what can reach it with `host` and put an authenticated host in front of it — see [Config](#config) for the two deployments. The CORS allowlist only constrains browsers, never a server-to-server call.
 
 Import `automationRouter` instead of calling `startAutomationServer` to mount it on a server of your own.
 
@@ -82,7 +82,13 @@ app.use('/admin/api/automations', requireAdmin,
         createAutomationProxyRouter({ baseUrl: 'http://127.0.0.1:8500/api' }));
 ```
 
-One catch-all handler forwards method, path and query string as received, so it covers every route the API has and every route it grows. It authenticates nothing — the guard you mount in front of it is the whole access control — and it needs `express.json()` upstream, since it re-serialises `req.body`. An unreachable runner answers `502` in the same `{ success, error }` envelope as the API's own failures.
+One catch-all handler forwards method, path and query string as received, so it covers every route the API has and every route it grows. It authenticates nothing — the guard you mount in front of it is the whole access control — and it needs `express.json()` upstream, since it re-serialises `req.body`. An unreachable runner answers `502` in the same `{ success, error }` envelope as the API's own failures, naming the base URL it dialled and the underlying cause:
+
+```
+Automation runner unreachable at http://127.0.0.1:8500/api: connect ECONNREFUSED 127.0.0.1:8500
+```
+
+**`127.0.0.1` in that example holds only while the runner shares a machine with the server mounting this.** `baseUrl` is dialled from inside the calling process: in separate containers it would name the *caller's own* loopback, where nothing listens, and every request would answer 502. Use the runner's internal service name there — see [Config](#config).
 
 Mounting the router directly in an application process instead does not work: `executeTask` opens its worker in the calling process, and schedule mutations hot-reload the calling process's cron registry. The work would run in the web server and the runner's crons would not reload.
 
@@ -126,4 +132,15 @@ Carried over verbatim from the runner this package was extracted from. They are 
 
 ## Config
 
-`host` chooses the interface the API binds to. It defaults to `0.0.0.0`, which is what 1.0.x did unconditionally; pass `'127.0.0.1'` unless a remote consumer genuinely needs to reach the runner, because this API has no authentication of its own.
+`host` chooses the interface the API binds to. It defaults to `0.0.0.0`, which is what 1.0.x did unconditionally.
+
+Because the API has no authentication of its own, this option and `baseUrl` on the proxy are one decision, taken twice — they must agree, and how they agree depends on where the two processes run:
+
+| | runner's `host` | proxy's `baseUrl` | what keeps the API private |
+|---|---|---|---|
+| One machine | `127.0.0.1` | `http://127.0.0.1:PORT/api` | the loopback: nothing off-host can address it |
+| Separate containers | `0.0.0.0` | `http://<internal-service-name>:PORT/api` | the network only |
+
+`127.0.0.1` is not an address that travels — it means "whoever is asking". A proxy in its own container that dials it reaches its own loopback, not the runner, so the pairing on the first row fails as a connection refusal and the proxy answers 502. That is the most common misconfiguration of this package.
+
+The second row's cost is that the bind no longer guards anything. Keep the runner's port unpublished on the host and off any public domain: exposed, it lets anyone trigger tasks and edit schedules without ever meeting the guard in front of the proxy.

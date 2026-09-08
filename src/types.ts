@@ -102,8 +102,15 @@ export interface AutomationConfig {
     runner: string;
     port: number;
     /** Interface the API binds to. Defaults to 0.0.0.0 — every interface, which is
-     *  what 1.0.x did unconditionally. This API has no auth layer of its own: a
-     *  runner driven only from its own machine belongs on 127.0.0.1. */
+     *  what 1.0.x did unconditionally. This API has no auth layer of its own, so
+     *  what may reach this interface is the whole of its protection:
+     *
+     *    - sharing a machine with the server that proxies it → '127.0.0.1', and
+     *      nothing else on the host can address it;
+     *    - in its own container → '0.0.0.0' is required, since the proxying
+     *      container cannot reach a loopback that is not its own. Isolation then
+     *      rests on the network: keep the port unpublished and off any public
+     *      domain, or the proxy's guard becomes bypassable by addressing it. */
     host?: string;
     mysql: MysqlOptions;
     redisUrl: string;

@@ -2,15 +2,23 @@
  * proxy.ts
  * A mountable Router that forwards to a remote runner's API.
  *
- * The runner has no authentication of its own, so it should not be reachable
- * from anywhere but its own machine (see the `host` option). This router is how
- * an application server drives it anyway: mounted behind whatever guard that
- * server already has, it turns the runner's API into an authenticated one.
+ * The runner has no authentication of its own, so it must not be reachable by
+ * anyone but this router (see the `host` option). Mounted behind whatever guard
+ * the application server already has, it turns the runner's API into an
+ * authenticated one.
  *
  *     import { createAutomationProxyRouter } from '@benjosivo/automation/proxy';
  *
  *     app.use('/admin/api/automations', requireAdmin,
  *             createAutomationProxyRouter({ baseUrl: 'http://127.0.0.1:8500/api' }));
+ *
+ * That 127.0.0.1 holds only while the runner shares a machine with the server
+ * mounting this. `baseUrl` is dialled from inside the calling process, so in
+ * separate containers 127.0.0.1 names *the caller's own* loopback, where nothing
+ * listens: every request answers 502. Point `baseUrl` at the runner's internal
+ * service name instead, and bind the runner to 0.0.0.0 so it can be reached —
+ * what keeps its unauthenticated API private is then the network, so its port
+ * must stay off the public internet and off the host.
  *
  * Why this belongs in the package rather than in each host: the alternative is a
  * hand-written list of routes to forward, which drifts. The copies that existed
@@ -61,8 +69,15 @@ export function createAutomationProxyRouter(options: AutomationProxyOptions): Ro
             if (type) res.type(type);
             res.status(upstream.status).send(body);
         } catch (err: any) {
+            // `err.message` alone is the string "fetch failed" — Node puts the useful
+            // half in `err.cause` ("connect ECONNREFUSED 10.0.1.4:8500", "getaddrinfo
+            // ENOTFOUND runner"). Reporting only the outer message costs whoever reads
+            // this 502 the address that failed and the reason it failed, which is the
+            // entire diagnosis when a host is misconfigured. A timeout has no `cause`
+            // and describes itself, so the fallback covers it.
+            const cause = err?.cause?.message ?? err?.message ?? String(err);
             // Same envelope as the API's own failures, so a client needs one shape.
-            res.status(502).json({ success: false, error: `Automation runner unreachable: ${err.message}` });
+            res.status(502).json({ success: false, error: `Automation runner unreachable at ${base}: ${cause}` });
         }
     });
 
