@@ -49,8 +49,11 @@ export interface AutomTaskRun {
 export interface AutomTaskLock {
     idAutom_Task_Lock: number;
     ConcurrencyGroup: string;
+    /** NULL means the group is free. This column alone decides that — see db.releaseLock(). */
     Autom_Task_Run_id: number | null;
-    LockedAt: Date | null;
+    /** When this group was last taken. NOT NULL in 001_autom_tables.sql, and never cleared;
+     *  the `| null` this used to carry is what made writing NULL to it look allowed. */
+    LockedAt: Date;
 }
 
 // ─── Runtime Types ────────────────────────────────────────────────────────────

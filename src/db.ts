@@ -245,25 +245,71 @@ export async function getRunningTasks(): Promise<AutomTaskRun[]> {
 
 // ─── Locks ────────────────────────────────────────────────────────────────────
 
+/**
+ * Take the group's lock for this run, or report that someone else holds it.
+ *
+ * TWO STATEMENTS, BECAUSE affectedRows CANNOT BE ASKED THE QUESTION
+ * -----------------------------------------------------------------
+ * This used to be one `INSERT IGNORE … ON DUPLICATE KEY UPDATE` whose result was read as
+ * "affectedRows = 1 took the lock, 0 means someone else holds it". MySQL does document 1 for an
+ * insert, 2 for a real update and 0 for an existing row set to its current values — but only
+ * without CLIENT_FOUND_ROWS, and mysql2 turns that flag on by default
+ * (`getDefaultFlags()` lists FOUND_ROWS). With it, an unchanged row also reports 1.
+ *
+ * Measured against MySQL 8 through mysql2 on 10 September 2026: insert 1, contended 1,
+ * re-acquire 2. Every branch was therefore > 0, so acquireLock() returned true to *every*
+ * caller and ConcurrencyGroup excluded nothing at all. Nothing in the wild had noticed because
+ * no task in that database had a ConcurrencyGroup set — the feature had never actually run.
+ *
+ * The form below never asks a count to mean something subtle. The INSERT only guarantees a row
+ * exists; the UPDATE's WHERE is what decides, and it cannot match a lock somebody holds. Two
+ * runners racing both reach the UPDATE, InnoDB serialises them on the row, and the second one
+ * finds nothing to match. Locking happens once per run — the extra round trip is not a cost
+ * worth trading correctness for.
+ */
 export async function acquireLock(group: string, runId: number): Promise<boolean> {
-    // INSERT IGNORE: an existing row does not throw, it comes back with affectedRows = 0
-    const result = (await executeMySQLQuery2({
+    // A concurrent runner having created the row first is the normal case, not an error:
+    // IGNORE turns that duplicate-key collision into a no-op.
+    const ensured = await executeMySQLQuery2({
         query: `INSERT IGNORE INTO Autom_Task_Lock (ConcurrencyGroup, Autom_Task_Run_id, LockedAt)
-                VALUES (?, ?, NOW())
-                ON DUPLICATE KEY UPDATE
-                    Autom_Task_Run_id = IF(Autom_Task_Run_id IS NULL, VALUES(Autom_Task_Run_id), Autom_Task_Run_id),
-                    LockedAt          = IF(Autom_Task_Run_id IS NULL, NOW(), LockedAt)`,
-        values: [group, runId],
+                VALUES (?, NULL, NOW())`,
+        values: [group],
+    });
+    assertOk(ensured, 'acquireLock (ensure row)');
+
+    // `Autom_Task_Run_id IS NULL` is the whole test — a held lock matches no row, so
+    // affectedRows is 0 whatever the client flags say about counting.
+    const taken = (await executeMySQLQuery2({
+        query: `UPDATE Autom_Task_Lock
+                   SET Autom_Task_Run_id = ?, LockedAt = NOW()
+                 WHERE ConcurrencyGroup = ? AND Autom_Task_Run_id IS NULL`,
+        values: [runId, group],
     })) as any;
-    assertOk(result, 'acquireLock');
-    // affectedRows = 1 means this run took the lock, 0 means someone else holds it
-    return (result.affectedRows as number) > 0;
+    assertOk(taken, 'acquireLock');
+    return (taken.affectedRows as number) > 0;
 }
 
+/**
+ * Releasing clears the holder and nothing else.
+ *
+ * `LockedAt` is declared NOT NULL by sql/001_autom_tables.sql, so setting it to NULL fails
+ * outright under STRICT_TRANS_TABLES (MySQL 1048, "Column 'LockedAt' cannot be null") — which
+ * is the default. This function used to do exactly that, and the damage was quiet: the caller
+ * in executor.ts swallows the rejection (`.catch(console.error)`), so the run looked fine while
+ * the lock row kept its holder forever. Every later acquireLock() on that group then returned
+ * false, and the task never ran again. clearAllLocks() below made the same mistake, but awaited
+ * without a catch in startAutomationServer() — so a restart, the one thing that should have
+ * recovered from it, threw during boot instead.
+ *
+ * The holder column alone decides whether the lock is free: acquireLock() branches on
+ * `Autom_Task_Run_id IS NULL` and never reads `LockedAt`. Leaving the timestamp in place costs
+ * nothing and needs no migration on databases already created from 001 — it just means
+ * `LockedAt` reads as "when this group was last taken", not "when the current holder took it".
+ */
 export async function releaseLock(group: string, runId: number): Promise<void> {
     const result = await executeMySQLQuery2({
         query: `UPDATE Autom_Task_Lock
-                   SET Autom_Task_Run_id = NULL, LockedAt = NULL
+                   SET Autom_Task_Run_id = NULL
                  WHERE ConcurrencyGroup = ? AND Autom_Task_Run_id = ?`,
         values: [group, runId],
     });
@@ -271,13 +317,14 @@ export async function releaseLock(group: string, runId: number): Promise<void> {
 }
 
 /** Boot recovery: locks are stale after a crash. Only this runner's, for the
- *  same reason as timeoutStaleRuns — another process's locks are live, not stale. */
+ *  same reason as timeoutStaleRuns — another process's locks are live, not stale.
+ *  `LockedAt` is left alone here for the reason given on releaseLock(). */
 export async function clearAllLocks(): Promise<void> {
     const result = await executeMySQLQuery2({
         query: `UPDATE Autom_Task_Lock l
                   JOIN Autom_Task_Run r ON r.idAutom_Task_Run = l.Autom_Task_Run_id
                   JOIN Autom_Task t ON t.idAutom_Task = r.Autom_Task_id
-                   SET l.Autom_Task_Run_id = NULL, l.LockedAt = NULL
+                   SET l.Autom_Task_Run_id = NULL
                  WHERE t.Runner = ?`,
         values: [runner()],
     });

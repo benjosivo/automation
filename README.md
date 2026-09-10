@@ -58,7 +58,7 @@ The module is loaded in a `worker_threads` Worker whose bootstrap calls `init()`
 |---|---|
 | `sql/001_autom_tables.sql` | The four tables |
 | `sql/002_autom_runner.sql` | `Autom_Task.Runner`, required by this version |
-| `sql/003_autom_lock_unique.sql` | **Optional, changes behaviour.** See below |
+| `sql/003_autom_lock_unique.sql` | **Required by any task with a `ConcurrencyGroup`**, and a no-op for the rest. See below |
 | `sql/004_schedule_run_setnull.sql` | **Required if anything deletes a schedule.** See below |
 
 ## API
@@ -120,11 +120,19 @@ It injects one stylesheet and reads every colour, font and radius from `--autom-
 
 Carried over verbatim from the runner this package was extracted from. They are documented rather than silently fixed, because each fix changes what a machine does on an unattended nightly schedule.
 
-- **The concurrency lock does not lock.** `Autom_Task_Lock.ConcurrencyGroup` carries no unique index, so `acquireLock()`'s `ON DUPLICATE KEY UPDATE` never fires: every acquisition inserts a fresh row and succeeds. Tasks sharing a `ConcurrencyGroup` run in parallel regardless. `sql/003_autom_lock_unique.sql` fixes it — read its comments first.
+- **The concurrency lock needs `sql/003_autom_lock_unique.sql` to lock at all.** Without the unique index on `ConcurrencyGroup`, every acquisition inserts its own row and finds it free. With the index applied, the lock works as of 1.1.2 — see below for what 1.1.1 and earlier did instead.
 - **Heartbeat keys expire on write.** `setCache` treats `expirationMs` as an absolute epoch timestamp (Redis `PXAT`), but the heartbeat passes a duration (`90 * 1000`), so the key is written already expired. Nothing reads the heartbeat today, so nothing observably breaks.
 - **The heartbeat renewal interval is 30 000 seconds**, not 30 — `HEARTBEAT_INTERVAL` is already in milliseconds and is multiplied by 1000 again.
 - **Deleting a schedule fails once it has run**, until `sql/004_schedule_run_setnull.sql` is applied. The foreign key from `Autom_Task_Run` carries no `ON DELETE` clause, so MySQL restricts: every run the schedule produced holds it. The migration switches it to `SET NULL`, which keeps the runs — a run is a historical fact, and a manually triggered one already has no schedule.
 - **The trigger queue is not concurrency-safe.** It is a JSON array read-modify-written through `setCache` and drained whole on each 2-second poll. Two processes polling the same runner's queue can lose entries.
+
+## Fixed in 1.1.2 — `ConcurrencyGroup` was unusable
+
+Both defects were in the lock, and either one alone was enough to make the feature worse than not having it. Neither had been noticed in the wild: no task in the shared database had a `ConcurrencyGroup` set, so the code path had never run.
+
+**Releasing a lock threw.** `releaseLock()` set `LockedAt = NULL` on a column `sql/001_autom_tables.sql` declares `NOT NULL`, which fails under `STRICT_TRANS_TABLES` — the default. `executeTask` swallows that rejection (`.catch(console.error)`), so the run looked healthy while the lock kept its holder forever and every later acquisition was refused. `clearAllLocks()` did the same thing at boot, awaited with no catch, so restarting — the one thing that should have cleared it — threw during startup instead. Neither call touches `LockedAt` now; the holder column alone says whether the group is free.
+
+**Acquiring a lock always succeeded.** The old `INSERT IGNORE … ON DUPLICATE KEY UPDATE` read `affectedRows` as 1-took-it / 0-someone-else-has-it. That mapping holds only without `CLIENT_FOUND_ROWS`, and mysql2 enables that flag by default, which makes an unchanged row report 1 as well. Measured against MySQL 8 on 10 September 2026: insert 1, contended 1, re-acquire 2 — every branch above zero, so `acquireLock()` returned `true` to every caller. It is now an `INSERT IGNORE` that only guarantees the row exists, followed by an `UPDATE … WHERE Autom_Task_Run_id IS NULL` whose `WHERE` cannot match a held lock, whatever the client flags count.
 
 ## Platform
 
