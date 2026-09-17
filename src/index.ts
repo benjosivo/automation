@@ -115,7 +115,7 @@ function installShutdownHandlers(): void {
 
 // ─── Pieces, for hosts that want to assemble their own server ─────────────────
 
-export { executeTask, getActiveRuns } from './executor.js';
+export { executeTask, getActiveRuns, runEvents } from './executor.js';
 export { startScheduler, stopScheduler, reloadSchedule, reloadAllSchedules } from './scheduler.js';
 export { router as automationRouter } from './api.js';
 export { setTaskActiveFlag, isTaskActiveInRedis, closeRedis } from './redis.js';

@@ -15,13 +15,17 @@ import { Router, type Request, type Response } from 'express';
 import cron from 'node-cron';
 import * as db from './db.js';
 import * as redis from './redis.js';
-import { executeTask, getActiveRuns } from './executor.js';
+import { executeTask, getActiveRuns, runEvents } from './executor.js';
 import { reloadSchedule, reloadAllSchedules } from './scheduler.js';
 import { runner } from './config.js';
 import { isValidCron } from './cron.js';
 import type { ActiveRun } from './types.js';
 
 export const router = Router();
+
+/** Keep-alive cadence of the SSE stream. Under the 60 s idle timeout that proxies
+ *  and load balancers commonly default to. */
+const PING_MS = 20_000;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -355,6 +359,47 @@ router.get('/runs/active', async (_req: Request, res: Response) => {
     } catch (err: any) {
         fail(res, err.message, 500);
     }
+});
+
+/**
+ * GET /runs/events — the live stream, as Server-Sent Events.
+ *
+ * Opens with a `snapshot` of what is running, then forwards every executor event
+ * as it happens. A client that connects mid-run is therefore not blind until the
+ * next progress tick.
+ *
+ * Two things buffer this into uselessness if left alone: nginx, answered by
+ * X-Accel-Buffering, and Express's compression() middleware, which a host
+ * mounting this router must exclude for this path — there is no header that
+ * turns it off from here.
+ *
+ * Declared before /runs/:id/progress, and after /runs/active, because Express
+ * matches in declaration order.
+ */
+router.get('/runs/events', (req: Request, res: Response) => {
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        'X-Accel-Buffering': 'no',
+    });
+
+    const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    send('snapshot', getActiveRuns().map(toWire));
+
+    const forward = (event: string) => (payload: unknown) => send(event, payload);
+    const handlers = new Map(['start', 'progress', 'log', 'end'].map((event) => [event, forward(event)]));
+    for (const [event, handler] of handlers) runEvents.on(event, handler);
+
+    // A comment line, which EventSource ignores. It keeps proxies and load
+    // balancers from closing a connection they consider idle.
+    const ping = setInterval(() => res.write(': ping\n\n'), PING_MS);
+
+    req.on('close', () => {
+        clearInterval(ping);
+        for (const [event, handler] of handlers) runEvents.off(event, handler);
+        res.end();
+    });
 });
 
 // GET /runs/:id/progress — where one run has got to.

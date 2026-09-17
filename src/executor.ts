@@ -5,9 +5,10 @@
  */
 
 import path from 'path';
+import { EventEmitter } from 'events';
 import { pathToFileURL } from 'url';
 import { Worker } from 'worker_threads';
-import type { TaskRunContext, TriggerSource, ActiveRun, TaskRunResult, MysqlOptions, ProgressUpdate, RunProgress } from './types.js';
+import type { TaskRunContext, TriggerSource, ActiveRun, TaskRunResult, MysqlOptions, ProgressUpdate, RunProgress, TaskStatus } from './types.js';
 import { cfg, runner } from './config.js';
 import * as db from './db.js';
 import * as redis from './redis.js';
@@ -19,6 +20,27 @@ const activeRuns = new Map<number, ActiveRun>(); // keyed by runId
 export function getActiveRuns(): ActiveRun[] {
     return [...activeRuns.values()];
 }
+
+// ─── Live events ──────────────────────────────────────────────────────────────
+
+/**
+ * What the API's SSE stream subscribes to. Four events:
+ *
+ *   start     { runId, taskId, taskName, attempt, startedAt }
+ *   progress  { runId, percent, step, current, total }
+ *   log       { runId, line }
+ *   end       { runId, taskId, taskName, status, error? }
+ *
+ * `progress` carries the delta without the log buffer: resending two hundred
+ * lines on every percent would make the stream heavier than the polling it
+ * replaces. A client connecting mid-run gets the full state from the snapshot
+ * the stream opens with.
+ */
+export const runEvents = new EventEmitter();
+
+// Four listeners per open dashboard tab, and Node warns past ten. The ceiling
+// here is how many people have the page open, which is not this module's to cap.
+runEvents.setMaxListeners(0);
 
 // ─── Progress ─────────────────────────────────────────────────────────────────
 // Memory is the source: the API and the executor share a process, so a reader
@@ -167,10 +189,16 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
         progress,
     };
     activeRuns.set(runId, activeRun);
+    runEvents.emit('start', { runId, taskId, taskName: task.Name, attempt, startedAt: activeRun.startedAt });
 
     // 8. Start heartbeat and the Redis progress mirror
     const stopHeartbeat = redis.startHeartbeat(runId);
     const mirror = mirrorToRedis(runId, progress);
+
+    // Settled by the try/catch below, read by the `end` event in the finally —
+    // which is the only place that runs whichever way the task goes.
+    let endStatus: TaskStatus = 'failed';
+    let endError: string | undefined;
 
     console.log(`[Executor] Starting "${task.Name}" (run #${runId}, attempt ${attempt})`);
 
@@ -182,18 +210,30 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
             progress: (update) => {
                 applyUpdate(progress, update);
                 mirror.touch();
+                runEvents.emit('progress', {
+                    runId,
+                    percent: progress.percent,
+                    step: progress.step,
+                    current: progress.current,
+                    total: progress.total,
+                });
             },
             log: (line) => {
                 appendLog(progress, line);
                 mirror.touch();
+                // The stored line, not the raw one: the subscriber sees exactly
+                // what the buffer holds, truncation included.
+                runEvents.emit('log', { runId, line: progress.logs[progress.logs.length - 1] });
             },
         });
 
         // 10. Success
+        endStatus = 'completed';
         await db.completeTaskRun(runId, result?.output);
         console.log(`[Executor] Completed : "${task.Name}" (run #${runId})`);
     } catch (err: any) {
         const errorMessage = err?.message ?? String(err);
+        endError = errorMessage;
         console.error(`[Executor] Failed : "${task.Name}" (run #${runId}, attempt ${attempt}): ${errorMessage}`);
 
         // 11. Retry logic
@@ -217,6 +257,7 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
             await db.releaseLock(task.ConcurrencyGroup, runId).catch(console.error);
         }
         activeRuns.delete(runId);
+        runEvents.emit('end', { runId, taskId, taskName: task.Name, status: endStatus, error: endError });
     }
 }
 

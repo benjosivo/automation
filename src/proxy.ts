@@ -27,6 +27,10 @@
  *
  * This subpath pulls in Express and nothing else — no MySQL, no Redis, no
  * node-cron. A host that only drives a remote runner installs none of them.
+ *
+ * GET /runs/events is a Server-Sent Events stream, and is forwarded chunk by
+ * chunk rather than buffered. A host that wraps this mount in compression()
+ * has to exclude that path, or the stream is buffered again one layer up.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -53,13 +57,45 @@ export function createAutomationProxyRouter(options: AutomationProxyOptions): Ro
     router.use(async (req: Request, res: Response) => {
         const hasBody = req.method !== 'GET' && req.method !== 'HEAD' && req.body !== undefined;
 
+        // Hand-rolled rather than AbortSignal.timeout(): the deadline has to be
+        // droppable once the response turns out to be a stream, which is only
+        // knowable after the headers arrive. A client that walks away aborts it
+        // too, so the runner stops producing for nobody.
+        const controller = new AbortController();
+        const deadline = setTimeout(() => controller.abort(), timeoutMs);
+        res.on('close', () => controller.abort());
+
         try {
             const upstream = await fetch(`${base}${req.url}`, {
                 method: req.method,
                 headers: hasBody ? { 'Content-Type': 'application/json' } : undefined,
                 body: hasBody ? JSON.stringify(req.body) : undefined,
-                signal: AbortSignal.timeout(timeoutMs),
+                signal: controller.signal,
             });
+
+            // Server-Sent Events, forwarded chunk by chunk. Buffering them into a
+            // string the way the branch below does would hold the whole stream
+            // until the runner closed it — which for /runs/events is never, so the
+            // browser would receive nothing at all and then time out.
+            if (upstream.headers.get('content-type')?.includes('text/event-stream') && upstream.body) {
+                clearTimeout(deadline);
+                res.writeHead(upstream.status, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    Connection: 'keep-alive',
+                    'X-Accel-Buffering': 'no',
+                });
+
+                const reader = upstream.body.getReader();
+                for (;;) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    res.write(value);
+                }
+                return res.end();
+            }
+
+            clearTimeout(deadline);
 
             // Text rather than json(): a path the runner does not match answers
             // Express's HTML 404, and parsing that would turn a legible 404 into a
@@ -69,6 +105,12 @@ export function createAutomationProxyRouter(options: AutomationProxyOptions): Ro
             if (type) res.type(type);
             res.status(upstream.status).send(body);
         } catch (err: any) {
+            clearTimeout(deadline);
+
+            // The client left, or a stream it was reading ended with it. There is
+            // no longer a response to write a 502 into, and doing so throws.
+            if (res.writableEnded || res.headersSent || req.destroyed) return;
+
             // `err.message` alone is the string "fetch failed" — Node puts the useful
             // half in `err.cause` ("connect ECONNREFUSED 10.0.1.4:8500", "getaddrinfo
             // ENOTFOUND runner"). Reporting only the outer message costs whoever reads
