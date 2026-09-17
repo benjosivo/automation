@@ -1,13 +1,15 @@
 # @benjosivo/automation
 
-A cron/task runner. Task definitions, schedules, run history and concurrency locks live in MySQL (`Autom_*` tables, DDL in `sql/`); Redis holds the fast-path flags and the on-demand trigger queue. Task *code* stays with the host and is loaded dynamically at run time — the `Autom_Task` row is what binds a schedule to a module.
+A cron/task runner. Task definitions, schedules, run history and concurrency locks live in MySQL (`Autom_*` tables, DDL in `sql/`); Redis holds the fast-path flags, the on-demand trigger queue and a mirror of what a running task reports. Task *code* stays with the host and is loaded dynamically at run time — the `Autom_Task` row is what binds a schedule to a module.
 
 ```ts
 import { startAutomationServer } from '@benjosivo/automation';
 
+const port = Number(process.env.AUTOMATION_PORT);
+
 startAutomationServer({
     runner: 'avosplats',
-    port: Number(process.env.AUTOMATION_PORT),
+    port,
     mysql: {
         host: process.env.MyDB_HOST,
         user: process.env.MyDB_USER,
@@ -84,7 +86,7 @@ None of this is persisted. It lives in the runner's memory, mirrored to `autom:r
 
 ## API
 
-Mounted under `/api` by `startAutomationServer`, plus an unauthenticated `/healthcheck`. `GET|PATCH /tasks/:id`, `POST /tasks/:id/trigger`, `POST /tasks/trigger-by-name/:name`, CRUD on `/schedules` (mutations hot-reload the cron registry — no restart), `POST /schedules/reload`, `GET /runs`, `GET /runs/active`. Listing routes are runner-scoped; a task belonging to another runner answers `409`.
+Mounted under `/api` by `startAutomationServer`, plus an unauthenticated `/healthcheck`. `GET|PATCH /tasks/:id`, `POST /tasks/:id/trigger`, `POST /tasks/trigger-by-name/:name`, CRUD on `/schedules` (mutations hot-reload the cron registry — no restart), `POST /schedules/reload`, `GET /runs`, `GET /runs/:id`, `GET /runs/active`, `GET /runs/events`, `GET /runs/:id/progress`. Listing routes are runner-scoped; a task belonging to another runner answers `409`.
 
 `GET /api/health` lives inside the router, so a host that mounts or proxies it has a liveness probe; `/healthcheck` remains outside for the standalone server.
 
@@ -152,8 +154,7 @@ It injects one stylesheet and reads every colour, font and radius from `--autom-
 Carried over verbatim from the runner this package was extracted from. They are documented rather than silently fixed, because each fix changes what a machine does on an unattended nightly schedule.
 
 - **The concurrency lock needs `sql/003_autom_lock_unique.sql` to lock at all.** Without the unique index on `ConcurrencyGroup`, every acquisition inserts its own row and finds it free. With the index applied, the lock works as of 1.1.2 — see below for what 1.1.1 and earlier did instead.
-- **Heartbeat keys expire on write.** `setCache` treats `expirationMs` as an absolute epoch timestamp (Redis `PXAT`), but the heartbeat passes a duration (`90 * 1000`), so the key is written already expired. Nothing reads the heartbeat today, so nothing observably breaks.
-- **The heartbeat renewal interval is 30 000 seconds**, not 30 — `HEARTBEAT_INTERVAL` is already in milliseconds and is multiplied by 1000 again.
+- **The heartbeat is written and read by nothing.** Two bugs kept it from even being stored until 1.2.0: `setCache` treats `expirationMs` as an absolute `PXAT` and the heartbeat passed a duration, so every key was written already expired; and the renewal interval was multiplied by 1000 a second time, giving 8 h 20 between beats for a 90 s TTL. Both are fixed, and `autom:run:<id>:heartbeat` now holds what it says. **No consumer has been written yet** — `timeoutStaleRuns()` sweeps every `running`/`pending` row of this runner at boot, on status alone, without consulting liveness. So a run whose worker dies mid-flight still shows as running until the next restart.
 - **Deleting a schedule fails once it has run**, until `sql/004_schedule_run_setnull.sql` is applied. The foreign key from `Autom_Task_Run` carries no `ON DELETE` clause, so MySQL restricts: every run the schedule produced holds it. The migration switches it to `SET NULL`, which keeps the runs — a run is a historical fact, and a manually triggered one already has no schedule.
 - **The trigger queue is not concurrency-safe.** It is a JSON array read-modify-written through `setCache` and drained whole on each 2-second poll. Two processes polling the same runner's queue can lose entries.
 

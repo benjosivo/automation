@@ -3,7 +3,8 @@
  *
  * A cron/task runner whose definitions, schedules, run history and concurrency
  * locks live in MySQL (Autom_* tables, DDL in sql/), with Redis holding the
- * fast-path flags and the on-demand trigger queue. Task code stays with the host
+ * fast-path flags, the on-demand trigger queue and a mirror of what a running
+ * task reports. Task code stays with the host
  * and is loaded dynamically at run time — the Autom_Task row is what binds a
  * schedule to a module.
  *
