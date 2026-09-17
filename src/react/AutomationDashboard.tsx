@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type 
 import { expandCron, isValidCron } from '../cron.js';
 import type { AutomSchedule, AutomTaskRun, TaskStatus } from '../types.js';
 import Calendar, { type CalView } from './calendar.js';
-import { createClient, type ActiveRunMemory, type Fetcher } from './client.js';
+import { createClient, type ActiveRunMemory, type AutomationClient, type Fetcher } from './client.js';
 import History from './history.js';
 import { LABELS, type Lang } from './i18n.js';
 import Overview from './overview.js';
@@ -36,10 +36,26 @@ const POLL_ACTIVE_MS = 8_000;
 /** The fallback cadence while something is actually running. Only reached when
  *  the event stream is unavailable — see useRunStream. */
 const POLL_RUNNING_MS = 1_500;
+/** The reconciliation reload, when the stream is down and it is the only thing
+ *  refreshing the run window. */
 const POLL_ALL_MS = 60_000;
+/**
+ * The same reload while the stream is up, where it is a safety net rather than
+ * the mechanism: the stream already reports everything the runner does, so what
+ * is left to catch is a change no event can describe — a direct UPDATE in MySQL.
+ *
+ * Five minutes is not arbitrary. It is the TTL of the Redis active flag, so it
+ * is the cadence at which the runner itself notices such a write. A dashboard
+ * refreshing faster than the engine it watches would only display a change the
+ * engine has not acted on yet.
+ */
+const POLL_ALL_STREAMING_MS = 5 * 60_000;
 /** Log lines kept per run in the browser. Matches the runner's own ring, so the
  *  stream and a fresh /runs/active agree on what there is to show. */
 const LOG_WINDOW = 200;
+/** Coalescing window for stream-triggered reloads. Five crons firing on the same
+ *  minute are five `start` events and one reload. */
+const RESYNC_DEBOUNCE_MS = 400;
 /** EventSource reconnects on its own, so one error is a reconnection, not a
  *  fault. Two in a row without an open in between is an outage. */
 const STREAM_GIVE_UP = 2;
@@ -122,10 +138,10 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
     }, [loadAll]);
 
     // The stream, and the polling it replaces. Two effects, not one: the live
-    // cadence changes whenever a run starts or the stream drops, and re-creating
-    // a shared effect for that would keep restarting the 60 s reload, which would
-    // then never fire.
-    const streaming = useRunStream(apiBase, setData, loadLive);
+    // cadence changes whenever a run starts, and re-creating a shared effect for
+    // that would keep restarting the reconciliation reload, which would then
+    // never fire.
+    const streaming = useRunStream(apiBase, setData, loadAll);
     const hasRunning = (data?.active.memory.length ?? 0) > 0;
 
     useEffect(() => {
@@ -135,9 +151,9 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
     }, [loadLive, streaming, hasRunning]);
 
     useEffect(() => {
-        const all = setInterval(loadAll, POLL_ALL_MS);
+        const all = setInterval(loadAll, streaming ? POLL_ALL_STREAMING_MS : POLL_ALL_MS);
         return () => clearInterval(all);
-    }, [loadAll]);
+    }, [loadAll, streaming]);
 
     /** Runs one mutation, keeps its target disabled meanwhile, and reloads rather
      *  than patching local state — the runner is the authority on what happened,
@@ -264,7 +280,7 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
                 />
             )}
 
-            {runModal && <RunModal run={runModal} labels={labels} onClose={() => setRunModal(null)} />}
+            {runModal && <RunModal run={runModal} client={client} labels={labels} onClose={() => setRunModal(null)} />}
 
             {scheduleModal && (
                 <ScheduleModal
@@ -289,17 +305,43 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
     );
 }
 
-function RunModal({ run, labels, onClose }: { run: AutomTaskRun; labels: typeof LABELS.en; onClose: () => void }) {
-    const isError = Boolean(run.ErrorMessage);
+/**
+ * The loaded window carries only a preview of `Output`, so this is where the
+ * whole column is fetched. The row it was opened with renders straight away and
+ * is replaced when the full one lands — a modal that opened empty and filled a
+ * moment later would read as a bug on the common case, where the preview already
+ * holds everything there is.
+ */
+function RunModal({ run, client, labels, onClose }: { run: AutomTaskRun; client: AutomationClient; labels: typeof LABELS.en; onClose: () => void }) {
+    const [full, setFull] = useState(run);
+    const runId = run.idAutom_Task_Run;
+
+    useEffect(() => {
+        let current = true;
+        client
+            .run(runId)
+            .then((fetched) => {
+                if (current) setFull(fetched);
+            })
+            .catch(() => {
+                // Keep showing the preview. The runner being unreachable is already
+                // surfaced by the panels behind this modal.
+            });
+        return () => {
+            current = false;
+        };
+    }, [client, runId]);
+
+    const isError = Boolean(full.ErrorMessage);
     return (
         <Modal title={isError ? labels.errorTitle : labels.outputTitle} labels={labels} onClose={onClose}>
-            <pre className="autom-pre">{run.ErrorMessage ?? run.Output ?? '—'}</pre>
-            {isError && run.Output && (
+            <pre className="autom-pre">{full.ErrorMessage ?? full.Output ?? '—'}</pre>
+            {isError && full.Output && (
                 <>
                     <p className="autom-field-label" style={{ marginTop: '0.75rem' }}>
                         {labels.outputTitle}
                     </p>
-                    <pre className="autom-pre">{run.Output}</pre>
+                    <pre className="autom-pre">{full.Output}</pre>
                 </>
             )}
         </Modal>
@@ -396,11 +438,17 @@ function ScheduleModal({
  * header, so the `fetcher` prop does not apply to it, and a host authenticating
  * with an Authorization header will only ever see 401 on this route.
  *
- * `progress` and `log` are applied in place, with no request at all. `start` and
- * `end` instead trigger one targeted reload: they change rows the stream does
- * not carry — the database's view of what is running, and each task's last run.
+ * `progress` and `log` are applied in place, with no request at all. The three
+ * events that change rows the stream does not carry — `start` and `end`, which
+ * add and settle run rows, and `snapshot`, which arrives on every reconnection —
+ * each trigger one reload instead.
+ *
+ * That reload on `snapshot` is what keeps an incrementally-maintained state
+ * honest. EventSource reconnects silently, and the events emitted while it was
+ * away are gone: without a resynchronisation at exactly that moment, a laptop
+ * waking from sleep would show a stale dashboard with nothing to say so.
  */
-function useRunStream(apiBase: string, setData: Dispatch<SetStateAction<DashboardData | null>>, refresh: () => void): boolean {
+function useRunStream(apiBase: string, setData: Dispatch<SetStateAction<DashboardData | null>>, resync: () => void): boolean {
     const [streaming, setStreaming] = useState(false);
 
     useEffect(() => {
@@ -408,6 +456,15 @@ function useRunStream(apiBase: string, setData: Dispatch<SetStateAction<Dashboar
 
         let failures = 0;
         const source = new EventSource(`${apiBase.replace(/\/+$/, '')}/runs/events`, { withCredentials: true });
+
+        let resyncTimer: ReturnType<typeof setTimeout> | null = null;
+        const resyncSoon = () => {
+            if (resyncTimer) clearTimeout(resyncTimer);
+            resyncTimer = setTimeout(() => {
+                resyncTimer = null;
+                resync();
+            }, RESYNC_DEBOUNCE_MS);
+        };
 
         const patch = (runId: number, change: (run: ActiveRunMemory) => ActiveRunMemory) =>
             setData((current) =>
@@ -431,10 +488,19 @@ function useRunStream(apiBase: string, setData: Dispatch<SetStateAction<Dashboar
             return () => source.removeEventListener(event, listener);
         };
 
+        // The first snapshot arrives beside the mount's own load, which covers the
+        // same ground. Every later one is a reconnection, and those are the ones
+        // that have events to make up for.
+        let reconnected = false;
+
         const detach = [
-            on('snapshot', (memory: ActiveRunMemory[]) => setData((current) => (current ? { ...current, active: { ...current.active, memory } } : current))),
-            on('start', refresh),
-            on('end', refresh),
+            on('snapshot', (memory: ActiveRunMemory[]) => {
+                setData((current) => (current ? { ...current, active: { ...current.active, memory } } : current));
+                if (reconnected) resyncSoon();
+                reconnected = true;
+            }),
+            on('start', resyncSoon),
+            on('end', resyncSoon),
             on('progress', (event) =>
                 patch(event.runId, (run) => ({
                     ...run,
@@ -457,11 +523,12 @@ function useRunStream(apiBase: string, setData: Dispatch<SetStateAction<Dashboar
         };
 
         return () => {
+            if (resyncTimer) clearTimeout(resyncTimer);
             for (const off of detach) off();
             source.close();
             setStreaming(false);
         };
-    }, [apiBase, setData, refresh]);
+    }, [apiBase, setData, resync]);
 
     return streaming;
 }

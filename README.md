@@ -90,6 +90,8 @@ Mounted under `/api` by `startAutomationServer`, plus an unauthenticated `/healt
 
 `GET /runs/events` is a Server-Sent Events stream: a `snapshot` of what is running on connect, then `start`, `progress`, `log` and `end` as they happen. `GET /runs/:id/progress` answers the same state for one run, from memory while it runs and from Redis for ten minutes after, then `null`. A host that wraps the router in `compression()` **must exclude `/runs/events`** — compression buffers the stream, and no header from here turns that off.
 
+`GET /runs` truncates `Output` to its first 200 characters. It is a `mediumtext`, and this listing is loaded five hundred rows at a time; what a list renders is the first line. **`GET /runs/:id` is where the column comes back whole** — that is what the dashboard's run modal opens. `GET /tasks/:id/runs` is not truncated: it defaults to twenty rows.
+
 `POST /schedules` and `PATCH /schedules/:id` answer **400** on an expression that either node-cron or the five-field parser rejects. Before 1.1.0 an unusable expression was stored, listed as active, and never fired — `registerJob()` warned to the console and returned.
 
 **There is no auth layer**: every `/api` route is open. Restrict what can reach it with `host` and put an authenticated host in front of it — see [Config](#config) for the two deployments. The CORS allowlist only constrains browsers, never a server-to-server call.
@@ -140,6 +142,8 @@ The whole management surface as one component: statistics, running tasks, recent
 `apiBase` points at a `createAutomationProxyRouter` mount. Pass `fetcher` to reuse a host's own fetch wrapper — sessions, redirects, deploy detection.
 
 A running task shows a progress bar, its current step and its last log line, fed by `GET /runs/events`. **`EventSource` cannot carry a custom header, so `fetcher` does not apply to that connection**: a host authenticating with an `Authorization` header will only ever see `401` there. That is why the stream is not the only path — when it fails twice in a row without opening, the dashboard falls back to polling `/runs/active`, every 1.5 s while something is running and every 8 s otherwise. Nothing has to be configured either way; a cookie-based session works over the stream unchanged.
+
+While the stream is up, `progress` and `log` are applied with no request at all, and the full reload drops to one every five minutes. It is not there to keep up — it reconciles. An `EventSource` reconnects silently and the events emitted while it was away are gone, so the dashboard reloads on every reconnection, which is the moment state can have drifted. The five-minute timer then only catches what no event can describe: a direct `UPDATE` in MySQL. It matches the TTL of the Redis active flag, which is how long the runner itself takes to notice one.
 
 It injects one stylesheet and reads every colour, font and radius from `--autom-*` custom properties whose defaults are declared on `:root`. Declare the same names on `.autom-root` to restyle it; a property set on the element beats one inherited from an ancestor, so the override wins whatever the stylesheet order. Under a CSP that forbids inline styles, import `AUTOM_CSS` and serve it yourself.
 

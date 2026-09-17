@@ -423,4 +423,22 @@ router.get('/runs/:id/progress', async (req: Request, res: Response) => {
     }
 });
 
+// GET /runs/:id — one run, with its Output in full.
+//
+// GET /runs truncates that column to a preview, because it is a mediumtext and
+// the dashboard loads five hundred rows of it at a time. This is where whoever
+// wants to read the whole thing comes.
+router.get('/runs/:id', async (req: Request, res: Response) => {
+    try {
+        const id = posInt(req.params.id);
+        if (id === null) return fail(res, 'Run id must be a positive integer');
+
+        const run = await db.getRunById(id);
+        if (!run) return fail(res, 'Run not found', 404); // unknown, or another runner's
+        ok(res, run);
+    } catch (err: any) {
+        fail(res, err.message, 500);
+    }
+});
+
 export default router;

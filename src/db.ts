@@ -191,6 +191,26 @@ export async function timeoutStaleRuns(): Promise<number> {
     return result.affectedRows as number;
 }
 
+/**
+ * How much of `Output` a listed run carries.
+ *
+ * `Output` is a mediumtext, and this listing is loaded five hundred rows at a
+ * time by the dashboard, so `SELECT r.*` meant re-sending every task's whole
+ * output on every reload. What a list actually renders is the first line cut to
+ * forty characters, which always fits well inside this.
+ *
+ * Whoever needs the text in full asks for one run — getRunById() does not
+ * truncate.
+ */
+const OUTPUT_PREVIEW_CHARS = 200;
+
+/** Every column of the run, with `Output` cut to OUTPUT_PREVIEW_CHARS. Spelled
+ *  out rather than `r.*` precisely so that adding a column to the table does not
+ *  silently put it back in a five-hundred-row payload. */
+const RUN_LIST_COLUMNS = `r.idAutom_Task_Run, r.Autom_Task_id, r.Autom_Schedule_id, r.Status, r.TriggeredBy,
+                          r.Attempt, r.StartedAt, r.FinishedAt, r.ErrorMessage,
+                          LEFT(r.Output, ${OUTPUT_PREVIEW_CHARS}) AS Output`;
+
 export async function getAllRuns(opts: { limit: number; statusFilter?: string; taskIdFilter?: number }): Promise<AutomTaskRun[]> {
     const { limit, statusFilter, taskIdFilter } = opts;
     const conditions: string[] = ['t.Runner = ?'];
@@ -207,7 +227,7 @@ export async function getAllRuns(opts: { limit: number; statusFilter?: string; t
     values.push(limit.toString());
 
     const result = await executeMySQLQuery2({
-        query: `SELECT r.*, t.Name AS TaskName
+        query: `SELECT ${RUN_LIST_COLUMNS}, t.Name AS TaskName
                   FROM Autom_Task_Run r
                   JOIN Autom_Task t ON t.idAutom_Task = r.Autom_Task_id
                  WHERE ${conditions.join(' AND ')}
@@ -216,6 +236,19 @@ export async function getAllRuns(opts: { limit: number; statusFilter?: string; t
         values,
     });
     return assertRows<AutomTaskRun>(result, 'getAllRuns');
+}
+
+/** One run, `Output` included in full. Runner-scoped through the join, like
+ *  every other listing here. */
+export async function getRunById(id: number): Promise<AutomTaskRun | null> {
+    const result = await executeMySQLQuery2({
+        query: `SELECT r.*, t.Name AS TaskName
+                  FROM Autom_Task_Run r
+                  JOIN Autom_Task t ON t.idAutom_Task = r.Autom_Task_id
+                 WHERE r.idAutom_Task_Run = ? AND t.Runner = ?`,
+        values: [id.toString(), runner()],
+    });
+    return assertSingle<AutomTaskRun>(result, 'getRunById');
 }
 
 export async function getRunsForTask(taskId: number, limit = 20): Promise<AutomTaskRun[]> {

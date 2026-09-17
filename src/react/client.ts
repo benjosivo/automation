@@ -74,6 +74,10 @@ export function createClient(apiBase: string, fetcher: Fetcher = defaultFetcher)
 
         runsForTask: (taskId: number, limit = 20) => request<AutomTaskRun[]>(`/tasks/${taskId}/runs?limit=${limit}`),
 
+        /** One run with its Output in full. The rows `runs()` returns carry only a
+         *  preview of that column — see the runner's GET /runs. */
+        run: (runId: number) => request<AutomTaskRun>(`/runs/${runId}`),
+
         /** Null once the run has been finished long enough for the runner's Redis
          *  mirror to expire. The run's Output column is the record past that. */
         runProgress: (runId: number) => request<RunProgress | null>(`/runs/${runId}/progress`),
