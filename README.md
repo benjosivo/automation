@@ -48,6 +48,27 @@ export async function run(ctx: TaskRunContext): Promise<TaskRunResult> {
 
 The module is loaded in a `worker_threads` Worker whose bootstrap calls `init()` from `@benjosivo/mysql` with the options from your config, then imports the module and calls `run(context)`. Throw and the executor retries while `attempt <= RetryLimit`, spaced by `RetryDelaySeconds`, each attempt its own run row. Return and `output` is stored on the row.
 
+### Reporting progress
+
+A long task can say where it has got to, and the dashboard shows it while the task runs:
+
+```ts
+export async function run(ctx: TaskRunContext): Promise<TaskRunResult> {
+    const batches = await listBatches();
+    for (const [i, batch] of batches.entries()) {
+        ctx.progress?.({ percent: Math.round((i / batches.length) * 100), step: `batch ${i + 1}/${batches.length}` });
+        await handle(batch);
+    }
+    return { output: `${batches.length} batches` };
+}
+```
+
+`progress` is **optional and must be called with `?.`**: the executor builds it inside the worker, so a module imported and called directly — a test, a script, a host running the task outside the runner — gets a context without it. Every field of the update is optional too; a task that knows its step but not its share sends only `step`, and the bar reads as indeterminate rather than claiming a figure.
+
+`console.log`, `console.error` and `console.warn` are forwarded as well, with no change to any task: they still reach the runner's stdout, and each line also becomes a dashboard line. A run keeps its last 200 lines; the percentage is coerced, clamped to `[0, 100]` and dropped if it is not a finite number.
+
+None of this is persisted. It lives in the runner's memory, mirrored to `autom:run:<id>:progress` in Redis for ten minutes so that a dashboard opened just after a task finished still shows where it got to. The lasting record is the run row's `Output`.
+
 `Autom_Task.ModulePath` is a path to **compiled JS**, resolved against the process working directory. Moving a task file means updating that column — nothing checks it until the task runs.
 
 `@benjosivo/mysql` is a peer dependency: the host, the package and the tasks must share one pool. Its `executeMySQLQuery2` **returns** `{ error }` rather than throwing — check it or wrap it.
@@ -66,6 +87,8 @@ The module is loaded in a `worker_threads` Worker whose bootstrap calls `init()`
 Mounted under `/api` by `startAutomationServer`, plus an unauthenticated `/healthcheck`. `GET|PATCH /tasks/:id`, `POST /tasks/:id/trigger`, `POST /tasks/trigger-by-name/:name`, CRUD on `/schedules` (mutations hot-reload the cron registry — no restart), `POST /schedules/reload`, `GET /runs`, `GET /runs/active`. Listing routes are runner-scoped; a task belonging to another runner answers `409`.
 
 `GET /api/health` lives inside the router, so a host that mounts or proxies it has a liveness probe; `/healthcheck` remains outside for the standalone server.
+
+`GET /runs/events` is a Server-Sent Events stream: a `snapshot` of what is running on connect, then `start`, `progress`, `log` and `end` as they happen. `GET /runs/:id/progress` answers the same state for one run, from memory while it runs and from Redis for ten minutes after, then `null`. A host that wraps the router in `compression()` **must exclude `/runs/events`** — compression buffers the stream, and no header from here turns that off.
 
 `POST /schedules` and `PATCH /schedules/:id` answer **400** on an expression that either node-cron or the five-field parser rejects. Before 1.1.0 an unusable expression was stored, listed as active, and never fired — `registerJob()` warned to the console and returned.
 
@@ -87,6 +110,8 @@ One catch-all handler forwards method, path and query string as received, so it 
 ```
 Automation runner unreachable at http://127.0.0.1:8500/api: connect ECONNREFUSED 127.0.0.1:8500
 ```
+
+`/runs/events` is forwarded chunk by chunk rather than buffered, and the `timeoutMs` deadline is dropped once a response turns out to be a stream — otherwise the dashboard's live updates would die after ten seconds.
 
 **`127.0.0.1` in that example holds only while the runner shares a machine with the server mounting this.** `baseUrl` is dialled from inside the calling process: in separate containers it would name the *caller's own* loopback, where nothing listens, and every request would answer 502. Use the runner's internal service name there — see [Config](#config).
 
@@ -113,6 +138,8 @@ import { AutomationDashboard } from '@benjosivo/automation/react';
 The whole management surface as one component: statistics, running tasks, recent failures, next occurrences, a month/week/by-task calendar overlaying past runs with projected ones, task cards with manual triggering and activation, schedule editing with live validation, and a filterable run history. `react >= 18` is an optional peer dependency; hosts that never import this subpath do not need it.
 
 `apiBase` points at a `createAutomationProxyRouter` mount. Pass `fetcher` to reuse a host's own fetch wrapper — sessions, redirects, deploy detection.
+
+A running task shows a progress bar, its current step and its last log line, fed by `GET /runs/events`. **`EventSource` cannot carry a custom header, so `fetcher` does not apply to that connection**: a host authenticating with an `Authorization` header will only ever see `401` there. That is why the stream is not the only path — when it fails twice in a row without opening, the dashboard falls back to polling `/runs/active`, every 1.5 s while something is running and every 8 s otherwise. Nothing has to be configured either way; a cookie-based session works over the stream unchanged.
 
 It injects one stylesheet and reads every colour, font and radius from `--autom-*` custom properties whose defaults are declared on `:root`. Declare the same names on `.autom-root` to restyle it; a property set on the element beats one inherited from an ancestor, so the override wins whatever the stylesheet order. Under a CSP that forbids inline styles, import `AUTOM_CSS` and serve it yourself.
 

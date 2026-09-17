@@ -162,6 +162,8 @@ export const AUTOM_CSS = `
 @media (prefers-reduced-motion: reduce) {
     .autom-pulse { animation: none; }
     .autom-btn { transition: none; }
+    .autom-progress-bar { transition: none; }
+    .autom-progress-unknown .autom-progress-bar { animation: none; width: 100%; opacity: 0.4; }
 }
 
 /* ── Task cards ─────────────────────────────────────────────────────────── */
@@ -192,6 +194,27 @@ export const AUTOM_CSS = `
 .autom-sched-cron { font-family: var(--autom-font-mono); font-size: 0.8125rem; font-weight: 600; }
 .autom-sched-grow { flex: 1 1 8rem; min-width: 0; }
 .autom-sched-actions { display: flex; gap: 0.2rem; margin-left: auto; }
+
+/* ── Running now, with progress ─────────────────────────────────────────── */
+.autom-running { margin-top: 0.4rem; }
+.autom-running .autom-sched { margin-top: 0; }
+.autom-running-step { font-weight: 600; }
+.autom-running-log {
+    font-family: var(--autom-font-mono); padding: 0.15rem 0.6rem 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.autom-progress {
+    height: 0.25rem; margin-top: 0.2rem; overflow: hidden;
+    background: var(--autom-surface-sunken); border-radius: var(--autom-radius-sm);
+}
+.autom-progress-bar {
+    height: 100%; width: 0; background: var(--autom-primary);
+    border-radius: inherit; transition: width 0.3s ease-out;
+}
+/* No figure reported: the bar sweeps instead of filling, which says "moving"
+   without claiming an amount. */
+.autom-progress-unknown .autom-progress-bar { width: 35%; animation: autom-sweep 1.6s ease-in-out infinite; }
+@keyframes autom-sweep { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
 
 /* ── Table ──────────────────────────────────────────────────────────────── */
 .autom-table-wrap { overflow-x: auto; }

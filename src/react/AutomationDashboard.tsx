@@ -15,11 +15,11 @@
  * to whenever a run landed between two requests.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { expandCron, isValidCron } from '../cron.js';
 import type { AutomSchedule, AutomTaskRun, TaskStatus } from '../types.js';
 import Calendar, { type CalView } from './calendar.js';
-import { createClient, type Fetcher } from './client.js';
+import { createClient, type ActiveRunMemory, type Fetcher } from './client.js';
 import History from './history.js';
 import { LABELS, type Lang } from './i18n.js';
 import Overview from './overview.js';
@@ -33,7 +33,16 @@ import { ErrorState, Modal, Skeletons } from './ui.js';
  *  calendar and a useful history, small enough to stay one quick request. */
 const RUNS_WINDOW = 500;
 const POLL_ACTIVE_MS = 8_000;
+/** The fallback cadence while something is actually running. Only reached when
+ *  the event stream is unavailable — see useRunStream. */
+const POLL_RUNNING_MS = 1_500;
 const POLL_ALL_MS = 60_000;
+/** Log lines kept per run in the browser. Matches the runner's own ring, so the
+ *  stream and a fresh /runs/active agree on what there is to show. */
+const LOG_WINDOW = 200;
+/** EventSource reconnects on its own, so one error is a reconnection, not a
+ *  fault. Two in a row without an open in between is an outage. */
+const STREAM_GIVE_UP = 2;
 
 export interface AutomationDashboardProps {
     /** Where the host mounted the automation proxy, without a trailing slash —
@@ -112,14 +121,23 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
         loadAll();
     }, [loadAll]);
 
+    // The stream, and the polling it replaces. Two effects, not one: the live
+    // cadence changes whenever a run starts or the stream drops, and re-creating
+    // a shared effect for that would keep restarting the 60 s reload, which would
+    // then never fire.
+    const streaming = useRunStream(apiBase, setData, loadLive);
+    const hasRunning = (data?.active.memory.length ?? 0) > 0;
+
     useEffect(() => {
-        const live = setInterval(loadLive, POLL_ACTIVE_MS);
+        if (streaming) return; // the stream already says everything this poll would ask for
+        const live = setInterval(loadLive, hasRunning ? POLL_RUNNING_MS : POLL_ACTIVE_MS);
+        return () => clearInterval(live);
+    }, [loadLive, streaming, hasRunning]);
+
+    useEffect(() => {
         const all = setInterval(loadAll, POLL_ALL_MS);
-        return () => {
-            clearInterval(live);
-            clearInterval(all);
-        };
-    }, [loadLive, loadAll]);
+        return () => clearInterval(all);
+    }, [loadAll]);
 
     /** Runs one mutation, keeps its target disabled meanwhile, and reloads rather
      *  than patching local state — the runner is the authority on what happened,
@@ -366,4 +384,84 @@ function ScheduleModal({
             </label>
         </Modal>
     );
+}
+
+/**
+ * The live stream, with the polling fallback it depends on.
+ *
+ * Returns whether the stream is currently carrying events. False means the
+ * caller must poll — either because the browser has no EventSource, because the
+ * host's authentication rejected the connection, or because the runner is
+ * unreachable. Polling is not a nicety here: EventSource cannot carry a custom
+ * header, so the `fetcher` prop does not apply to it, and a host authenticating
+ * with an Authorization header will only ever see 401 on this route.
+ *
+ * `progress` and `log` are applied in place, with no request at all. `start` and
+ * `end` instead trigger one targeted reload: they change rows the stream does
+ * not carry — the database's view of what is running, and each task's last run.
+ */
+function useRunStream(apiBase: string, setData: Dispatch<SetStateAction<DashboardData | null>>, refresh: () => void): boolean {
+    const [streaming, setStreaming] = useState(false);
+
+    useEffect(() => {
+        if (typeof EventSource === 'undefined') return; // server-side render, or an old browser
+
+        let failures = 0;
+        const source = new EventSource(`${apiBase.replace(/\/+$/, '')}/runs/events`, { withCredentials: true });
+
+        const patch = (runId: number, change: (run: ActiveRunMemory) => ActiveRunMemory) =>
+            setData((current) =>
+                current
+                    ? {
+                          ...current,
+                          active: { ...current.active, memory: current.active.memory.map((run) => (run.runId === runId ? change(run) : run)) },
+                      }
+                    : current,
+            );
+
+        const on = (event: string, handle: (payload: any) => void) => {
+            const listener = (message: MessageEvent) => {
+                try {
+                    handle(JSON.parse(message.data));
+                } catch {
+                    // One malformed frame is not worth tearing the stream down for.
+                }
+            };
+            source.addEventListener(event, listener);
+            return () => source.removeEventListener(event, listener);
+        };
+
+        const detach = [
+            on('snapshot', (memory: ActiveRunMemory[]) => setData((current) => (current ? { ...current, active: { ...current.active, memory } } : current))),
+            on('start', refresh),
+            on('end', refresh),
+            on('progress', (event) =>
+                patch(event.runId, (run) => ({
+                    ...run,
+                    progress: { ...run.progress, percent: event.percent, step: event.step, current: event.current, total: event.total },
+                })),
+            ),
+            on('log', (event) =>
+                patch(event.runId, (run) => ({ ...run, progress: { ...run.progress, logs: [...run.progress.logs, event.line].slice(-LOG_WINDOW) } })),
+            ),
+        ];
+
+        source.onopen = () => {
+            failures = 0;
+            setStreaming(true);
+        };
+        source.onerror = () => {
+            setStreaming(false);
+            if (++failures < STREAM_GIVE_UP) return; // EventSource is reconnecting by itself
+            source.close();
+        };
+
+        return () => {
+            for (const off of detach) off();
+            source.close();
+            setStreaming(false);
+        };
+    }, [apiBase, setData, refresh]);
+
+    return streaming;
 }

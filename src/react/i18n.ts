@@ -26,6 +26,7 @@ export interface Labels {
     nothingScheduled: string;
     recentFailures: string;
     noFailures: string;
+    progress: string;
     of: string;
 
     run: string;
@@ -110,6 +111,7 @@ const en: Labels = {
     avgDuration: 'average duration',
     nextUp: 'Next up',
     nothingScheduled: 'Nothing scheduled in the next 48 hours.',
+    progress: 'Progress',
     recentFailures: 'Recent failures',
     noFailures: 'No failures recorded.',
     of: 'of',
@@ -196,6 +198,7 @@ const fr: Labels = {
     avgDuration: 'durée moyenne',
     nextUp: 'Prochainement',
     nothingScheduled: 'Rien de prévu dans les 48 heures.',
+    progress: 'Progression',
     recentFailures: 'Échecs récents',
     noFailures: 'Aucun échec enregistré.',
     of: 'sur',

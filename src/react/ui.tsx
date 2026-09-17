@@ -45,6 +45,25 @@ export function TaskDot({ color, pulsing }: { color: string; pulsing?: boolean }
     return <span className={`autom-dot${pulsing ? ' autom-pulse' : ''}`} style={{ background: color }} aria-hidden="true" />;
 }
 
+/** Determinate when a figure is known, indeterminate otherwise. A task that
+ *  reports a step but no percentage still shows that it is moving, which is the
+ *  whole point on a task that cannot count its own work. */
+export function ProgressBar({ percent, label }: { percent: number | null; label: string }) {
+    const value = percent === null || !Number.isFinite(percent) ? null : Math.min(100, Math.max(0, percent));
+    return (
+        <div
+            className={`autom-progress${value === null ? ' autom-progress-unknown' : ''}`}
+            role="progressbar"
+            aria-label={label}
+            aria-valuenow={value === null ? undefined : Math.round(value)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+        >
+            <div className="autom-progress-bar" style={value === null ? undefined : { width: `${value}%` }} />
+        </div>
+    );
+}
+
 export function Note({ children, kind }: { children: ReactNode; kind?: 'error' }) {
     return <p className={`autom-note${kind === 'error' ? ' autom-note-error' : ''}`}>{children}</p>;
 }

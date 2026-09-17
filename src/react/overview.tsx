@@ -11,7 +11,7 @@ import { useMemo } from 'react';
 import { expandCron } from '../cron.js';
 import { formatDuration, hhmm, runDurationMs, truncate } from './format.js';
 import type { PanelProps } from './shared.js';
-import { Note, Panel, Stat, StatusChip, TaskDot } from './ui.js';
+import { Note, Panel, ProgressBar, Stat, StatusChip, TaskDot } from './ui.js';
 
 const NEXT_WINDOW_HOURS = 48;
 const NEXT_COUNT = 12;
@@ -63,7 +63,13 @@ export default function Overview({ data, actions, labels, locale, colorOf }: Pan
 
     const activeTasks = tasks.filter((t) => t.isActive === 1).length;
     const activeSchedules = schedules.filter((s) => s.isActive === 1).length;
+
+    // The DB list is what is running, including a run whose process died and left
+    // its row behind. The progress lives in the runner's memory, so the two are
+    // joined by runId rather than one replacing the other — a row with no match
+    // simply has no bar.
     const running = active.db;
+    const progressOf = new Map(active.memory.map((run) => [run.runId, run.progress]));
 
     const dateTime = new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' });
     const dayTime = new Intl.DateTimeFormat(locale, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
@@ -85,15 +91,26 @@ export default function Overview({ data, actions, labels, locale, colorOf }: Pan
 
             {running.length > 0 && (
                 <Panel title={labels.runningNow}>
-                    {running.map((run) => (
-                        <div key={run.idAutom_Task_Run} className="autom-sched">
-                            <TaskDot color={colorOf(run.Autom_Task_id)} pulsing />
-                            <span className="autom-sched-grow">{run.TaskName ?? `#${run.Autom_Task_id}`}</span>
-                            <span className="autom-tiny autom-muted">
-                                {labels.colStarted} {dateTime.format(new Date(run.StartedAt))} · {labels.colAttempt} {run.Attempt}
-                            </span>
-                        </div>
-                    ))}
+                    {running.map((run) => {
+                        const progress = progressOf.get(run.idAutom_Task_Run);
+                        return (
+                            <div key={run.idAutom_Task_Run} className="autom-running">
+                                <div className="autom-sched">
+                                    <TaskDot color={colorOf(run.Autom_Task_id)} pulsing />
+                                    <span className="autom-sched-grow">{run.TaskName ?? `#${run.Autom_Task_id}`}</span>
+                                    {progress?.step && <span className="autom-tiny autom-running-step">{truncate(progress.step, 50)}</span>}
+                                    <span className="autom-tiny autom-muted">
+                                        {progress?.percent !== null && progress?.percent !== undefined && `${Math.round(progress.percent)} % · `}
+                                        {labels.colStarted} {dateTime.format(new Date(run.StartedAt))} · {labels.colAttempt} {run.Attempt}
+                                    </span>
+                                </div>
+                                <ProgressBar percent={progress?.percent ?? null} label={labels.progress} />
+                                {progress?.logs.length ? (
+                                    <div className="autom-tiny autom-muted autom-running-log">{truncate(progress.logs[progress.logs.length - 1], 120)}</div>
+                                ) : null}
+                            </div>
+                        );
+                    })}
                 </Panel>
             )}
 

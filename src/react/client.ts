@@ -8,20 +8,23 @@
  * response that is not JSON is a normal occurrence here, not a bug.
  */
 
-import type { AutomSchedule, AutomTask, AutomTaskRun, TaskStatus } from '../types.js';
+import type { AutomSchedule, AutomTask, AutomTaskRun, RunProgress, TaskStatus } from '../types.js';
 
 export type Fetcher = (url: string, init?: RequestInit) => Promise<Response>;
 
+export interface ActiveRunMemory {
+    runId: number;
+    taskId: number;
+    taskName: string;
+    attempt: number;
+    startedAt: string;
+    concurrencyGroup: string | null;
+    progress: RunProgress;
+}
+
 export interface ActiveRunsPayload {
     db: AutomTaskRun[];
-    memory: {
-        runId: number;
-        taskId: number;
-        taskName: string;
-        attempt: number;
-        startedAt: string;
-        concurrencyGroup: string | null;
-    }[];
+    memory: ActiveRunMemory[];
 }
 
 const defaultFetcher: Fetcher = (url, init) => fetch(url, { credentials: 'same-origin', ...init });
@@ -70,6 +73,10 @@ export function createClient(apiBase: string, fetcher: Fetcher = defaultFetcher)
         },
 
         runsForTask: (taskId: number, limit = 20) => request<AutomTaskRun[]>(`/tasks/${taskId}/runs?limit=${limit}`),
+
+        /** Null once the run has been finished long enough for the runner's Redis
+         *  mirror to expire. The run's Output column is the record past that. */
+        runProgress: (runId: number) => request<RunProgress | null>(`/runs/${runId}/progress`),
 
         setTaskActive: (taskId: number, active: boolean) => send<{ updated: number }>('PATCH', `/tasks/${taskId}`, { isActive: active ? 1 : 0 }),
 
