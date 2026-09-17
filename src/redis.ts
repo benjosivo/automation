@@ -111,8 +111,11 @@ const HEARTBEAT_INTERVAL = 30 * 1000;
 
 const heartbeatKey = (runId: number) => `autom:run:${runId}:heartbeat`;
 
+/** `expirationMs` is a PXAT, so the TTL has to be added to the clock. Passing the
+ *  duration alone stored a key that expired in January 1970 — Redis dropped it on
+ *  the spot, and no heartbeat has ever been readable. */
 async function setHeartbeat(runId: number): Promise<void> {
-    await setCache({ key: heartbeatKey(runId), obj: Date.now().toString(), expirationMs: HEARTBEAT_TTL });
+    await setCache({ key: heartbeatKey(runId), obj: Date.now().toString(), expirationMs: Date.now() + HEARTBEAT_TTL });
 }
 
 async function clearHeartbeat(runId: number): Promise<void> {
@@ -125,7 +128,7 @@ export function startHeartbeat(runId: number): () => void {
 
     const timer = setInterval(() => {
         setHeartbeat(runId).catch(() => {});
-    }, HEARTBEAT_INTERVAL * 1000);
+    }, HEARTBEAT_INTERVAL);
 
     return () => {
         clearInterval(timer);
