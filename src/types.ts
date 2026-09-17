@@ -69,6 +69,38 @@ export interface TaskRunContext {
     runId: number;
     attempt: number;
     triggeredBy: TriggerSource;
+    /** Publishes where the task has got to, for the dashboard to show while it runs.
+     *
+     *  Optional, and it has to stay that way: the executor builds it inside the
+     *  worker, so a module imported and called directly — a test, a script, a host
+     *  running the task outside the runner — receives a context without it. Call it
+     *  as `context.progress?.({ … })`. */
+    progress?: (update: ProgressUpdate) => void;
+}
+
+/** What a task reports. Every field is optional: a task that knows its step but
+ *  not its share of the whole sends only `step`. */
+export interface ProgressUpdate {
+    /** 0–100. Values outside that range, and anything that is not a number, are
+     *  dropped by the executor rather than rendered as a broken bar. */
+    percent?: number;
+    step?: string;
+    current?: number;
+    total?: number;
+}
+
+/** What the executor keeps, and what /runs/active and /runs/:id/progress return.
+ *  Null means "never reported", which the dashboard draws as indeterminate — as
+ *  opposed to 0, which means the task said it was at zero. */
+export interface RunProgress {
+    percent: number | null;
+    step: string | null;
+    current: number | null;
+    total: number | null;
+    /** The last lines only — the executor keeps a ring of LOG_BUFFER entries, so a
+     *  chatty task cannot fill the runner's memory. */
+    logs: string[];
+    updatedAt: number;
 }
 
 export interface TaskRunResult {
@@ -85,6 +117,9 @@ export interface ActiveRun {
     startedAt: Date;
     attempt: number;
     abortController: AbortController;
+    /** Mutated in place as the worker reports. Not serialisable as-is alongside
+     *  `abortController` — the API maps an ActiveRun field by field. */
+    progress: RunProgress;
 }
 
 // ─── Host configuration ───────────────────────────────────────────────────────

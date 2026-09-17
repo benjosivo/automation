@@ -7,7 +7,7 @@
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { Worker } from 'worker_threads';
-import type { TaskRunContext, TriggerSource, ActiveRun, TaskRunResult, MysqlOptions } from './types.js';
+import type { TaskRunContext, TriggerSource, ActiveRun, TaskRunResult, MysqlOptions, ProgressUpdate, RunProgress } from './types.js';
 import { cfg, runner } from './config.js';
 import * as db from './db.js';
 import * as redis from './redis.js';
@@ -18,6 +18,76 @@ const activeRuns = new Map<number, ActiveRun>(); // keyed by runId
 
 export function getActiveRuns(): ActiveRun[] {
     return [...activeRuns.values()];
+}
+
+// ─── Progress ─────────────────────────────────────────────────────────────────
+// Memory is the source: the API and the executor share a process, so a reader
+// never has to wait on Redis. Redis is a mirror, for whatever reads a run from
+// outside this process, and it is written at most once a second — a task that
+// calls progress() inside a hundred-thousand-iteration loop must not turn into a
+// hundred thousand SETs.
+
+/** How many log lines a live run keeps. Past that, the oldest go. */
+const LOG_BUFFER = 200;
+const STEP_MAX = 500;
+const LINE_MAX = 2_000;
+const REDIS_FLUSH_MS = 1_000;
+
+function emptyProgress(): RunProgress {
+    return { percent: null, step: null, current: null, total: null, logs: [], updatedAt: Date.now() };
+}
+
+function finiteOrNull(value: unknown): number | null {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+/** Nothing arriving here is trusted: it crossed a worker boundary from code the
+ *  package does not own. A percent of "42", of -3 or of NaN would each reach the
+ *  dashboard as a broken bar. */
+function applyUpdate(progress: RunProgress, update: ProgressUpdate): void {
+    if (update.percent !== undefined) {
+        const percent = finiteOrNull(update.percent);
+        if (percent !== null) progress.percent = Math.min(100, Math.max(0, percent));
+    }
+    if (update.step !== undefined) progress.step = String(update.step).slice(0, STEP_MAX);
+    if (update.current !== undefined) progress.current = finiteOrNull(update.current);
+    if (update.total !== undefined) progress.total = finiteOrNull(update.total);
+}
+
+function appendLog(progress: RunProgress, line: string): void {
+    progress.logs.push(line.slice(0, LINE_MAX));
+    if (progress.logs.length > LOG_BUFFER) progress.logs.splice(0, progress.logs.length - LOG_BUFFER);
+}
+
+/** The throttle. `progress` is mutated in place, so a flush already queued picks
+ *  up whatever the task reported meanwhile — there is never more than one timer,
+ *  and the state it writes is always the newest. */
+function mirrorToRedis(runId: number, progress: RunProgress) {
+    let lastFlush = 0;
+    let pending: ReturnType<typeof setTimeout> | null = null;
+
+    const flush = () => {
+        pending = null;
+        lastFlush = Date.now();
+        redis.setRunProgress(runId, progress).catch(() => {});
+    };
+
+    return {
+        touch() {
+            progress.updatedAt = Date.now();
+            if (pending) return;
+            const since = Date.now() - lastFlush;
+            if (since >= REDIS_FLUSH_MS) return flush();
+            pending = setTimeout(flush, REDIS_FLUSH_MS - since);
+        },
+        /** Called from the run's finally. The last state always lands, however
+         *  little time has passed since the previous write. */
+        stop() {
+            if (pending) clearTimeout(pending);
+            flush();
+        },
+    };
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
@@ -85,6 +155,7 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
 
     // 7. Register in activeRuns
     const abortController = new AbortController();
+    const progress = emptyProgress();
     const activeRun: ActiveRun = {
         runId,
         taskId,
@@ -93,11 +164,13 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
         startedAt: new Date(),
         attempt,
         abortController,
+        progress,
     };
     activeRuns.set(runId, activeRun);
 
-    // 8. Start heartbeat
+    // 8. Start heartbeat and the Redis progress mirror
     const stopHeartbeat = redis.startHeartbeat(runId);
+    const mirror = mirrorToRedis(runId, progress);
 
     console.log(`[Executor] Starting "${task.Name}" (run #${runId}, attempt ${attempt})`);
 
@@ -105,7 +178,16 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
         // 9. Dynamically import the task module
         const modulePath = task.ModulePath.startsWith('file:') ? task.ModulePath : pathToFileURL(path.resolve(task.ModulePath)).href;
         const context: TaskRunContext = { taskId, taskName: task.Name, runId, attempt, triggeredBy };
-        const result = await runInWorker(modulePath, context, cfg().mysql);
+        const result = await runInWorker(modulePath, context, cfg().mysql, {
+            progress: (update) => {
+                applyUpdate(progress, update);
+                mirror.touch();
+            },
+            log: (line) => {
+                appendLog(progress, line);
+                mirror.touch();
+            },
+        });
 
         // 10. Success
         await db.completeTaskRun(runId, result?.output);
@@ -127,8 +209,10 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
             await db.failTaskRun(runId, errorMessage);
         }
     } finally {
-        // 12. Always: stop heartbeat, release lock, remove from activeRuns
+        // 12. Always: stop heartbeat, flush the last progress, release lock,
+        //     remove from activeRuns
         stopHeartbeat();
+        mirror.stop();
         if (task.ConcurrencyGroup) {
             await db.releaseLock(task.ConcurrencyGroup, runId).catch(console.error);
         }
@@ -136,27 +220,57 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
     }
 }
 
+/** What the parent does with what a live worker says. */
+interface WorkerReport {
+    progress: (update: ProgressUpdate) => void;
+    log: (line: string) => void;
+}
+
 /**
  * The bootstrap runs in a fresh worker with no module graph of its own, so it has
  * to initialise the MySQL pool before importing the task. Those options travel
  * through workerData rather than being read from process.env: the package does not
  * know which variable names its host uses.
+ *
+ * The worker now speaks more than once. Every message carries a `type`, and only
+ * `done` ends the run — see the handler below, which used to terminate on the
+ * first message of any shape.
  */
-function runInWorker(modulePath: string, context: TaskRunContext, mysql: MysqlOptions): Promise<TaskRunResult> {
+function runInWorker(modulePath: string, context: TaskRunContext, mysql: MysqlOptions, report: WorkerReport): Promise<TaskRunResult> {
     return new Promise((resolve, reject) => {
         const worker = new Worker(
             `import { workerData, parentPort } from 'worker_threads';
+            import { inspect } from 'node:util';
             import * as mysql from '@benjosivo/mysql';
             const { modulePath, context, mysqlOptions } = workerData;
+
+            // postMessage throws once the worker is being torn down, and a task
+            // logging on its way out must not turn into an unhandled rejection.
+            const send = (msg) => { try { parentPort.postMessage(msg); } catch {} };
+
+            // workerData is structured-cloned, so functions do not survive the
+            // crossing: progress() has to be built on this side.
+            const ctx = { ...context, progress: (update) => send({ type: 'progress', update }) };
+
+            // The task's own console calls become dashboard lines without a single
+            // task being modified. The original still writes to the runner's stdout,
+            // so nothing is lost from the logs a host already collects.
+            for (const level of ['log', 'error', 'warn']) {
+                const original = console[level].bind(console);
+                console[level] = (...args) => {
+                    original(...args);
+                    send({ type: 'log', line: args.map((a) => (typeof a === 'string' ? a : inspect(a, { depth: 2 }))).join(' ') });
+                };
+            }
 
             mysql.init(mysqlOptions)
                 .then(() => import(modulePath))
                 .then(async (mod) => {
                     console.log(\`[\${context.taskName}] Starting — task=\${context.taskId} run=\${context.runId} attempt=\${context.attempt} via=\${context.triggeredBy}\`);
-                    return await mod.run(context);
+                    return await mod.run(ctx);
                 })
-                .then((result) => parentPort.postMessage({ ok: true, result }))
-                .catch((err) => parentPort.postMessage({ ok: false, error: err.message }));
+                .then((result) => send({ type: 'done', ok: true, result }))
+                .catch((err) => send({ type: 'done', ok: false, error: err.message }));
             `,
             {
                 eval: true,
@@ -169,8 +283,14 @@ function runInWorker(modulePath: string, context: TaskRunContext, mysql: MysqlOp
         );
 
         worker.on('message', (msg) => {
+            if (msg?.type === 'progress') return report.progress(msg.update ?? {});
+            if (msg?.type === 'log') return report.log(String(msg.line ?? ''));
+
+            // Anything else settles the run. Deliberately not a `type === 'done'`
+            // check: a message of an unknown shape must not leave a worker alive
+            // and a promise pending forever.
             worker.terminate();
-            msg.ok ? resolve(msg.result) : reject(new Error(msg.error));
+            msg?.ok ? resolve(msg.result) : reject(new Error(msg?.error ?? 'Worker sent an unexpected message'));
         });
         worker.on('error', (err) => {
             worker.terminate();

@@ -19,6 +19,7 @@ import { executeTask, getActiveRuns } from './executor.js';
 import { reloadSchedule, reloadAllSchedules } from './scheduler.js';
 import { runner } from './config.js';
 import { isValidCron } from './cron.js';
+import type { ActiveRun } from './types.js';
 
 export const router = Router();
 
@@ -37,6 +38,21 @@ function fail(res: Response, message: string, status = 400) {
 function posInt(raw: unknown): number | null {
     const n = Number(raw);
     return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/** An ActiveRun as it goes over the wire. Field by field rather than a spread:
+ *  `abortController` is not serialisable, and JSON.stringify on a raw ActiveRun
+ *  would throw. */
+function toWire(run: ActiveRun) {
+    return {
+        runId: run.runId,
+        taskId: run.taskId,
+        taskName: run.taskName,
+        attempt: run.attempt,
+        startedAt: run.startedAt,
+        concurrencyGroup: run.concurrencyGroup,
+        progress: run.progress,
+    };
 }
 
 /**
@@ -334,15 +350,29 @@ router.get('/runs/active', async (_req: Request, res: Response) => {
         const [dbRuns, memRuns] = await Promise.all([db.getRunningTasks(), Promise.resolve(getActiveRuns())]);
         ok(res, {
             db: dbRuns,
-            memory: memRuns.map((r) => ({
-                runId: r.runId,
-                taskId: r.taskId,
-                taskName: r.taskName,
-                attempt: r.attempt,
-                startedAt: r.startedAt,
-                concurrencyGroup: r.concurrencyGroup,
-            })),
+            memory: memRuns.map(toWire),
         });
+    } catch (err: any) {
+        fail(res, err.message, 500);
+    }
+});
+
+// GET /runs/:id/progress — where one run has got to.
+//
+// Declared after /runs/active: Express matches in declaration order, and a
+// :id route placed first would swallow "active" as an id.
+router.get('/runs/:id/progress', async (req: Request, res: Response) => {
+    try {
+        const id = posInt(req.params.id);
+        if (id === null) return fail(res, 'Run id must be a positive integer');
+
+        // Memory first — the executor runs in this process, so the live state is
+        // here and needs no round trip. Redis covers a run that has just ended,
+        // and whatever reads this from another process.
+        const live = getActiveRuns().find((r) => r.runId === id);
+        if (live) return ok(res, live.progress);
+
+        ok(res, await redis.getRunProgress(id)); // null: finished long enough ago that the TTL expired
     } catch (err: any) {
         fail(res, err.message, 500);
     }

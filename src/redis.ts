@@ -3,11 +3,13 @@
  * The lazily-reconnecting client, plus the automation keys layered on top:
  *   autom:task:<id>:active        fast path for Autom_Task.isActive
  *   autom:run:<id>:heartbeat      liveness of a run
+ *   autom:run:<id>:progress       how far a run has got, mirrored from the executor
  *   autom:trigger:queue:<runner>  on-demand triggers, one queue per runner
  */
 
 import { createClient, type RedisClientType } from 'redis';
 import { cfg, handleError, runner } from './config.js';
+import type { RunProgress } from './types.js';
 
 let client: RedisClientType | null = null;
 let lastConnectionCheck = 0;
@@ -134,6 +136,25 @@ export function startHeartbeat(runId: number): () => void {
         clearInterval(timer);
         clearHeartbeat(runId).catch(() => {});
     };
+}
+
+// ─── Run progress ─────────────────────────────────────────────────────────────
+// A mirror of what the executor holds in memory, for readers outside the runner
+// process. The TTL outlives the run by enough that a dashboard opened just after
+// a task finished still sees where it got to; past that, the run's Output column
+// is the record.
+
+const PROGRESS_TTL_MS = 10 * 60 * 1000;
+
+const progressKey = (runId: number) => `autom:run:${runId}:progress`;
+
+export async function setRunProgress(runId: number, progress: RunProgress): Promise<void> {
+    await setCache({ key: progressKey(runId), obj: progress, expirationMs: Date.now() + PROGRESS_TTL_MS });
+}
+
+export async function getRunProgress(runId: number): Promise<RunProgress | null> {
+    const value = await getCache(progressKey(runId));
+    return value === undefined || value === null ? null : (value as RunProgress);
 }
 
 // ─── On-demand trigger queue ──────────────────────────────────────────────────

@@ -130,6 +130,8 @@ export type {
     TaskModule,
     TaskRunContext,
     TaskRunResult,
+    ProgressUpdate,
+    RunProgress,
     TaskStatus,
     TriggerSource,
     ActiveRun,
