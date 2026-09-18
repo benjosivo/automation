@@ -202,10 +202,11 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
 
     console.log(`[Executor] Starting "${task.Name}" (run #${runId}, attempt ${attempt})`);
 
+    // 9. Dynamically import the task module
+    const modulePath = task.ModulePath.startsWith('file:') ? task.ModulePath : pathToFileURL(path.resolve(task.ModulePath)).href;
+    const context: TaskRunContext = { taskId, taskName: task.Name, runId, attempt, triggeredBy };
+
     try {
-        // 9. Dynamically import the task module
-        const modulePath = task.ModulePath.startsWith('file:') ? task.ModulePath : pathToFileURL(path.resolve(task.ModulePath)).href;
-        const context: TaskRunContext = { taskId, taskName: task.Name, runId, attempt, triggeredBy };
         const result = await runInWorker(modulePath, context, cfg().mysql, {
             progress: (update) => {
                 applyUpdate(progress, update);
@@ -247,6 +248,7 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
             }, delay);
         } else {
             await db.failTaskRun(runId, errorMessage);
+            cfg().onCompleteFail(errorMessage, context, task);
         }
     } finally {
         // 12. Always: stop heartbeat, flush the last progress, release lock,

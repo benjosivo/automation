@@ -157,4 +157,5 @@ export interface AutomationConfig {
     /** Where the runner reports what it could not handle itself. Defaults to
      *  console.error — a host with an alerting channel should pass its own. */
     onError?: (error: unknown, context: string) => void;
+    onCompleteFail?: (errorMessage: string, ctx: TaskRunContext, task: AutomTask) => void;
 }
