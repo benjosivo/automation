@@ -199,10 +199,8 @@ export const AUTOM_CSS = `
 .autom-running { margin-top: 0.4rem; }
 .autom-running .autom-sched { margin-top: 0; }
 .autom-running-step { font-weight: 600; }
-.autom-running-log {
-    font-family: var(--autom-font-mono); padding: 0.15rem 0.6rem 0;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+.autom-running-log { font-family: var(--autom-font-mono); padding: 0.15rem 0.6rem 0; }
+.autom-running-log-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .autom-progress {
     height: 0.25rem; margin-top: 0.2rem; overflow: hidden;
     background: var(--autom-surface-sunken); border-radius: var(--autom-radius-sm);

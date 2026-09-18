@@ -16,6 +16,7 @@ import { Note, Panel, ProgressBar, Stat, StatusChip, TaskDot } from './ui.js';
 const NEXT_WINDOW_HOURS = 48;
 const NEXT_COUNT = 12;
 const FAILURE_COUNT = 10;
+const RUNNING_LOG_LINES = 18;
 
 export default function Overview({ data, actions, labels, locale, colorOf }: PanelProps) {
     const { tasks, schedules, runs, active } = data;
@@ -106,7 +107,13 @@ export default function Overview({ data, actions, labels, locale, colorOf }: Pan
                                 </div>
                                 <ProgressBar percent={progress?.percent ?? null} label={labels.progress} />
                                 {progress?.logs.length ? (
-                                    <div className="autom-tiny autom-muted autom-running-log">{truncate(progress.logs[progress.logs.length - 1], 120)}</div>
+                                    <div className="autom-tiny autom-muted autom-running-log">
+                                        {progress.logs.slice(-RUNNING_LOG_LINES).map((line, i) => (
+                                            <div key={i} className="autom-running-log-line">
+                                                {truncate(line, 160)}
+                                            </div>
+                                        ))}
+                                    </div>
                                 ) : null}
                             </div>
                         );
