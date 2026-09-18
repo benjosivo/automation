@@ -190,7 +190,7 @@ router.post('/tasks/:id/trigger', async (req: Request, res: Response) => {
         const task = await ownedTask(res, req.params.id);
         if (!task) return;
 
-        const triggeredBy = req.body?.triggeredBy === 'manual' ? 'manual' : 'api';
+        const triggeredBy = req.body?.triggeredBy === 'manual' || req.body?.triggeredBy === 'dev' ? (process.platform === 'win32' ? 'dev' : req.body?.triggeredBy) : 'api';
 
         // Fire-and-forget — don't await, return immediately
         executeTask({ taskId: task.idAutom_Task, triggeredBy }).catch(console.error);
@@ -340,7 +340,7 @@ router.get('/runs', async (req: Request, res: Response) => {
     try {
         const limit = Math.min(posInt(req.query.limit) ?? 100, 10_000);
         const statusFilter = req.query.status ? String(req.query.status) : undefined;
-        const taskIdFilter = req.query.taskId ? posInt(req.query.taskId) ?? undefined : undefined;
+        const taskIdFilter = req.query.taskId ? (posInt(req.query.taskId) ?? undefined) : undefined;
         const runs = await db.getAllRuns({ limit, statusFilter, taskIdFilter });
         ok(res, runs);
     } catch (err: any) {

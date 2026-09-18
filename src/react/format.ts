@@ -43,6 +43,7 @@ export const TRIGGER_ICON: Record<TriggerSource, string> = {
     scheduler: '🕒',
     manual: '▶',
     api: '⚡',
+    dev: '🧪',
 };
 
 /** Milliseconds a run took, or null while it is still going. */

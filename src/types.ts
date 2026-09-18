@@ -1,5 +1,5 @@
 export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'timeout';
-export type TriggerSource = 'scheduler' | 'api' | 'manual';
+export type TriggerSource = 'scheduler' | 'api' | 'manual' | 'dev';
 
 export interface AutomTask {
     idAutom_Task: number;

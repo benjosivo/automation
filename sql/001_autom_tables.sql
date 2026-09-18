@@ -39,7 +39,7 @@ CREATE TABLE `Autom_Task_Run` (
   `Autom_Task_id` int NOT NULL,
   `Autom_Schedule_id` int DEFAULT NULL,
   `Status` enum('pending','running','completed','failed','timeout') NOT NULL,
-  `TriggeredBy` enum('scheduler','api','manual') NOT NULL,
+  `TriggeredBy` enum('scheduler','api','manual', 'dev') NOT NULL,
   `Attempt` int NOT NULL DEFAULT '1',
   `StartedAt` datetime NOT NULL,
   `FinishedAt` datetime DEFAULT NULL,

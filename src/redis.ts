@@ -167,7 +167,7 @@ export async function getRunProgress(runId: number): Promise<RunProgress | null>
 
 export interface TriggerPayload {
     taskId: number;
-    triggeredBy: 'api' | 'manual';
+    triggeredBy: 'api' | 'manual' | 'dev';
     scheduleId?: number;
 }
 
