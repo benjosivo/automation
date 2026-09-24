@@ -76,6 +76,23 @@ export interface TaskRunContext {
      *  running the task outside the runner — receives a context without it. Call it
      *  as `context.progress?.({ … })`. */
     progress?: (update: ProgressUpdate) => void;
+    /** Pushes a message to the host's WebSocket clients, through the Redis channel
+     *  named by `notifyChannel`. Relayed by the parent, which publishes on its one
+     *  shared connection rather than each worker opening its own.
+     *
+     *  Optional for the same reason as `progress`: call it as `context.notify?.({ … })`.
+     *  Fire-and-forget — a failed publish goes to `onError`, never to the task. */
+    notify?: (payload: NotifyPayload) => void;
+}
+
+/** What `notify` publishes, serialised as is. The shape is the host WebSocket
+ *  server's contract, not the runner's: it only has to survive JSON. */
+export interface NotifyPayload {
+    data: unknown;
+    path?: string;
+    url?: string;
+    /** Absent means every connected client. */
+    targetUserId?: number;
 }
 
 /** What a task reports. Every field is optional: a task that knows its step but
@@ -158,4 +175,7 @@ export interface AutomationConfig {
      *  console.error — a host with an alerting channel should pass its own. */
     onError?: (error: unknown, context: string) => void;
     onCompleteFail?: (errorMessage: string, ctx: TaskRunContext, task: AutomTask) => void;
+    /** Redis channel `notify` / `notifyClients` publish on. Defaults to 'ws:broadcast',
+     *  the channel the WebSocket server of the pre-package runner listened to. */
+    notifyChannel?: string;
 }

@@ -8,7 +8,7 @@
 
 import type { AutomationConfig } from './types.js';
 
-let current: Required<Pick<AutomationConfig, 'runner' | 'port' | 'host' | 'mysql' | 'redisUrl' | 'corsOrigins' | 'onError' | 'onCompleteFail'>> | null = null;
+let current: Required<Pick<AutomationConfig, 'runner' | 'port' | 'host' | 'mysql' | 'redisUrl' | 'corsOrigins' | 'onError' | 'onCompleteFail' | 'notifyChannel'>> | null = null;
 
 export function setConfig(config: AutomationConfig): void {
     if (!config.runner) throw new Error('[Automation] config.runner is required — it decides which tasks this process owns.');
@@ -22,6 +22,7 @@ export function setConfig(config: AutomationConfig): void {
         corsOrigins: config.corsOrigins ?? [],
         onError: config.onError ?? ((error, context) => console.error(`[${context}]`, error)),
         onCompleteFail: config.onCompleteFail ?? (() => {}),
+        notifyChannel: config.notifyChannel ?? 'ws:broadcast',
     };
 }
 
