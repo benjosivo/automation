@@ -9,7 +9,7 @@
 
 import { useMemo } from 'react';
 import type { TaskStatus } from '../types.js';
-import { formatDuration, runDurationMs, truncate } from './format.js';
+import { formatDuration, runDurationMs, TRIGGER_ICON, truncate } from './format.js';
 import type { PanelProps } from './shared.js';
 import { Note, StatusChip, TaskDot } from './ui.js';
 
@@ -65,9 +65,14 @@ export default function History({
 
     return (
         <>
-            <div className="autom-toolbar">
-                <select className="autom-select" value={statusFilter} aria-label={labels.status} onChange={(event) => setStatusFilter(event.target.value as TaskStatus | '')}>
-                    <option value="">{labels.allStatuses}</option>
+            <div className='autom-toolbar'>
+                <select
+                    className='autom-select'
+                    value={statusFilter}
+                    aria-label={labels.status}
+                    onChange={(event) => setStatusFilter(event.target.value as TaskStatus | '')}
+                >
+                    <option value=''>{labels.allStatuses}</option>
                     {STATUSES.map((status) => (
                         <option key={status} value={status}>
                             {status}
@@ -76,12 +81,12 @@ export default function History({
                 </select>
 
                 <select
-                    className="autom-select"
+                    className='autom-select'
                     value={taskFilter}
                     aria-label={labels.colTask}
                     onChange={(event) => setTaskFilter(event.target.value === '' ? '' : Number(event.target.value))}
                 >
-                    <option value="">{labels.allTasks}</option>
+                    <option value=''>{labels.allTasks}</option>
                     {data.tasks.map((task) => (
                         <option key={task.idAutom_Task} value={task.idAutom_Task}>
                             {task.Name}
@@ -89,11 +94,11 @@ export default function History({
                     ))}
                 </select>
 
-                <button type="button" className="autom-btn" onClick={onRefresh}>
+                <button type='button' className='autom-btn' onClick={onRefresh}>
                     {labels.refresh}
                 </button>
 
-                <span className="autom-tiny autom-muted" style={{ marginLeft: 'auto' }}>
+                <span className='autom-tiny autom-muted' style={{ marginLeft: 'auto' }}>
                     {STATUSES.filter((status) => summary.counts[status]).map((status) => (
                         <span key={status} style={{ marginLeft: '0.5rem' }}>
                             <StatusChip status={status} /> {summary.counts[status]}
@@ -106,8 +111,8 @@ export default function History({
             {rows.length === 0 ? (
                 <Note>{labels.noRuns}</Note>
             ) : (
-                <div className="autom-table-wrap">
-                    <table className="autom-table">
+                <div className='autom-table-wrap'>
+                    <table className='autom-table'>
                         <thead>
                             <tr>
                                 <th>{labels.colTask}</th>
@@ -129,26 +134,35 @@ export default function History({
                                     <td>
                                         <StatusChip status={run.Status} />
                                     </td>
-                                    <td className="autom-tiny">{run.TriggeredBy}</td>
-                                    <td className="autom-tiny">{run.Attempt}</td>
-                                    <td className="autom-tiny autom-muted" style={{ whiteSpace: 'nowrap' }}>
+                                    <td className='autom-tiny'>
+                                        {TRIGGER_ICON[run.TriggeredBy]}
+                                        {run.TriggeredBy}
+                                    </td>
+                                    <td className='autom-tiny'>{run.Attempt}</td>
+                                    <td className='autom-tiny autom-muted' style={{ whiteSpace: 'nowrap' }}>
                                         {dateTime.format(new Date(run.StartedAt))}
                                     </td>
-                                    <td className="autom-tiny">{formatDuration(runDurationMs(run))}</td>
-                                    <td className="autom-mono autom-tiny autom-muted">
-                                        {run.Autom_Schedule_id === null ? '—' : (scheduleCron.get(run.Autom_Schedule_id) ?? `#${run.Autom_Schedule_id}`)}
+                                    <td className='autom-tiny'>{formatDuration(runDurationMs(run))}</td>
+                                    <td className='autom-mono autom-tiny autom-muted'>
+                                        {run.Autom_Schedule_id === null
+                                            ? '—'
+                                            : (scheduleCron.get(run.Autom_Schedule_id) ?? `#${run.Autom_Schedule_id}`)}
                                     </td>
                                     <td>
                                         {run.ErrorMessage ? (
-                                            <button type="button" className="autom-btn autom-btn-ghost autom-btn-danger" onClick={() => actions.showRun(run)}>
+                                            <button
+                                                type='button'
+                                                className='autom-btn autom-btn-ghost autom-btn-danger'
+                                                onClick={() => actions.showRun(run)}
+                                            >
                                                 {truncate(run.ErrorMessage, 40)}
                                             </button>
                                         ) : run.Output ? (
-                                            <button type="button" className="autom-btn autom-btn-ghost" onClick={() => actions.showRun(run)}>
+                                            <button type='button' className='autom-btn autom-btn-ghost' onClick={() => actions.showRun(run)}>
                                                 {truncate(run.Output.split('\n')[0] ?? '', 40)}
                                             </button>
                                         ) : (
-                                            <span className="autom-muted">—</span>
+                                            <span className='autom-muted'>—</span>
                                         )}
                                     </td>
                                 </tr>
@@ -158,7 +172,11 @@ export default function History({
                 </div>
             )}
 
-            {windowFull && <p className="autom-tiny autom-muted" style={{ marginTop: '0.5rem' }}>{labels.limitReached}</p>}
+            {windowFull && (
+                <p className='autom-tiny autom-muted' style={{ marginTop: '0.5rem' }}>
+                    {labels.limitReached}
+                </p>
+            )}
         </>
     );
 }
