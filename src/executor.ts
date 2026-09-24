@@ -8,7 +8,7 @@ import path from 'path';
 import { EventEmitter } from 'events';
 import { pathToFileURL } from 'url';
 import { Worker } from 'worker_threads';
-import type { TaskRunContext, TriggerSource, ActiveRun, TaskRunResult, MysqlOptions, ProgressUpdate, RunProgress, TaskStatus } from './types.js';
+import type { TaskRunContext, TriggerSource, ActiveRun, TaskRunResult, MysqlOptions, ProgressUpdate, RunProgress, TaskStatus, NotifyPayload } from './types.js';
 import { cfg, runner } from './config.js';
 import * as db from './db.js';
 import * as redis from './redis.js';
@@ -226,6 +226,9 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
                 // what the buffer holds, truncation included.
                 runEvents.emit('log', { runId, line: progress.logs[progress.logs.length - 1] });
             },
+            notify: (payload) => {
+                redis.notifyClients(payload);
+            },
         });
 
         // 10. Success
@@ -267,6 +270,7 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
 interface WorkerReport {
     progress: (update: ProgressUpdate) => void;
     log: (line: string) => void;
+    notify: (payload: NotifyPayload) => void;
 }
 
 /**
@@ -292,8 +296,12 @@ function runInWorker(modulePath: string, context: TaskRunContext, mysql: MysqlOp
             const send = (msg) => { try { parentPort.postMessage(msg); } catch {} };
 
             // workerData is structured-cloned, so functions do not survive the
-            // crossing: progress() has to be built on this side.
-            const ctx = { ...context, progress: (update) => send({ type: 'progress', update }) };
+            // crossing: progress() and notify() have to be built on this side.
+            const ctx = {
+                ...context,
+                progress: (update) => send({ type: 'progress', update }),
+                notify: (payload) => send({ type: 'notify', payload }),
+            };
 
             // The task's own console calls become dashboard lines without a single
             // task being modified. The original still writes to the runner's stdout,
@@ -328,6 +336,7 @@ function runInWorker(modulePath: string, context: TaskRunContext, mysql: MysqlOp
         worker.on('message', (msg) => {
             if (msg?.type === 'progress') return report.progress(msg.update ?? {});
             if (msg?.type === 'log') return report.log(String(msg.line ?? ''));
+            if (msg?.type === 'notify') return report.notify(msg.payload);
 
             // Anything else settles the run. Deliberately not a `type === 'done'`
             // check: a message of an unknown shape must not leave a worker alive

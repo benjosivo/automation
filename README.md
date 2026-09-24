@@ -71,6 +71,16 @@ export async function run(ctx: TaskRunContext): Promise<TaskRunResult> {
 
 None of this is persisted. It lives in the runner's memory, mirrored to `autom:run:<id>:progress` in Redis for ten minutes so that a dashboard opened just after a task finished still shows where it got to. The lasting record is the run row's `Output`.
 
+### Notifying WebSocket clients
+
+A task can push a message to the host's browsers, through the Redis channel its WebSocket server subscribes to:
+
+```ts
+ctx.notify?.({ data: { recipeId }, path: '/recettes', targetUserId: userId });
+```
+
+The worker does not publish itself: it hands the payload to the runner, which publishes it on `notifyChannel` (default `ws:broadcast`) over its one Redis connection, so a run opens no connection of its own. The payload is sent as `JSON.stringify` of `{ data, path, url, targetUserId }` — the same message the pre-package runner's `notifyClients` published — and routing it is the WebSocket server's business. `notify` is optional like `progress`, and fire-and-forget: a failed publish goes to `onError`, never to the task. Code running in the runner's own thread (`onCompleteFail`, a host route) imports `notifyClients` from the package instead.
+
 `Autom_Task.ModulePath` is a path to **compiled JS**, resolved against the process working directory. Moving a task file means updating that column — nothing checks it until the task runs.
 
 `@benjosivo/mysql` is a peer dependency: the host, the package and the tasks must share one pool. Its `executeMySQLQuery2` **returns** `{ error }` rather than throwing — check it or wrap it.

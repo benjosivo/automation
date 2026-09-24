@@ -5,11 +5,12 @@
  *   autom:run:<id>:heartbeat      liveness of a run
  *   autom:run:<id>:progress       how far a run has got, mirrored from the executor
  *   autom:trigger:queue:<runner>  on-demand triggers, one queue per runner
+ * and the pub/sub channel a host's WebSocket server relays to its clients.
  */
 
 import { createClient, type RedisClientType } from 'redis';
 import { cfg, handleError, runner } from './config.js';
-import type { RunProgress } from './types.js';
+import type { NotifyPayload, RunProgress } from './types.js';
 
 let client: RedisClientType | null = null;
 let lastConnectionCheck = 0;
@@ -180,4 +181,18 @@ export async function popTriggers(): Promise<TriggerPayload[]> {
     if (queue.length === 0) return [];
     await setCache({ key: triggerQueueKey(), obj: JSON.stringify([]) });
     return queue;
+}
+
+// ─── Client notifications ─────────────────────────────────────────────────────
+// Published on the host's broadcast channel, which its WebSocket server
+// subscribes to and fans out. The runner only publishes: who receives what
+// (`targetUserId`, `path`) is decided on the other side.
+
+export async function notifyClients(payload: NotifyPayload): Promise<void> {
+    try {
+        const c = await ensureConnected();
+        await c.PUBLISH(cfg().notifyChannel, JSON.stringify(payload));
+    } catch (err) {
+        handleError(err, 'notifyClients redis');
+    }
 }
