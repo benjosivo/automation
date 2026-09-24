@@ -117,6 +117,82 @@ export const AUTOM_CSS = `
 .autom-stat-value { font-family: var(--autom-font-heading); font-size: 1.5rem; font-weight: 800; line-height: 1.2; }
 .autom-stat-sub { font-size: 0.75rem; color: var(--autom-on-surface-muted); }
 
+.autom-stat-good { border-left: 3px solid var(--autom-success); }
+.autom-stat-bad { border-left: 3px solid var(--autom-danger); }
+.autom-stat-accent { border-left: 3px solid var(--autom-info); }
+
+/* ── Filter bar ─────────────────────────────────────────────────────────── */
+.autom-filters {
+    display: flex; flex-direction: column; gap: 0.4rem;
+    border: 1px solid var(--autom-border); border-radius: var(--autom-radius);
+    background: var(--autom-surface); padding: 0.5rem 0.75rem; margin-bottom: 1rem;
+}
+.autom-filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.autom-filter-label { font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--autom-on-surface-muted); min-width: 6.5rem; }
+.autom-filter-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; flex: 1 1 14rem; min-width: 0; }
+.autom-filter-actions { display: inline-flex; align-items: center; gap: 0.2rem; margin-left: auto; }
+.autom-filter-chip {
+    appearance: none; cursor: pointer; font: inherit; font-size: 0.75rem; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    border-radius: 999px; padding: 0.1rem 0.55rem;
+    border: 1px solid var(--autom-border); background: var(--autom-surface); color: var(--autom-on-surface-muted);
+    opacity: 0.6; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+.autom-filter-chip[aria-pressed="true"] {
+    opacity: 1; color: var(--autom-on-surface);
+    border-color: var(--autom-chip-color, var(--autom-on-surface-muted));
+    background: color-mix(in srgb, var(--autom-chip-color, var(--autom-on-surface-muted)) 12%, var(--autom-surface));
+}
+.autom-filter-chip:hover { opacity: 1; }
+.autom-filter-chip:focus-visible { outline: 2px solid var(--autom-primary); outline-offset: 1px; }
+
+/* ── Overview layout ────────────────────────────────────────────────────── */
+.autom-breakdown { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+.autom-breakdown-seg[aria-pressed="false"] { opacity: 0.4; text-decoration: line-through; }
+.autom-overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+.autom-rows { display: flex; flex-direction: column; gap: 0.25rem; }
+.autom-row {
+    appearance: none; border: none; font: inherit; color: inherit; text-align: left; cursor: pointer;
+    display: flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0.45rem;
+    border-radius: var(--autom-radius-sm); background: none; width: 100%;
+}
+.autom-row:nth-child(odd) { background: var(--autom-surface-alt); }
+.autom-row:hover { background: var(--autom-surface-sunken); }
+.autom-row:focus-visible { outline: 2px solid var(--autom-primary); outline-offset: 1px; }
+.autom-row-time { color: var(--autom-on-surface-muted); white-space: nowrap; min-width: 7.5rem; font-size: 0.75rem; }
+.autom-row-name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.autom-failure {
+    display: flex; flex-direction: column; gap: 0.2rem; padding: 0.4rem 0.5rem;
+    border-left: 2px solid var(--autom-danger); border-radius: var(--autom-radius-sm);
+    background: var(--autom-surface-alt);
+}
+.autom-failure-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; min-width: 0; }
+.autom-failure-msg { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; text-align: left; }
+
+/* ── Activity chart ─────────────────────────────────────────────────────── */
+.autom-activity { display: grid; grid-template-columns: 2rem minmax(0, 1fr); column-gap: 0.4rem; }
+.autom-activity-axis { display: flex; flex-direction: column; justify-content: space-between; text-align: right; height: 12rem; line-height: 1; }
+.autom-activity-plot {
+    display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 0.4rem; height: 12rem;
+    border-bottom: 1px solid var(--autom-border);
+    background: linear-gradient(to bottom, var(--autom-border) 1px, transparent 1px) 0 0 / 100% 50%;
+}
+.autom-activity-col { display: flex; align-items: flex-end; justify-content: center; min-width: 0; }
+.autom-activity-col:hover .autom-activity-stack { filter: brightness(1.12); }
+.autom-activity-stack { width: 100%; max-width: 3rem; display: flex; flex-direction: column; gap: 2px; }
+.autom-activity-stack span { display: block; min-height: 2px; }
+.autom-activity-stack span:first-child { border-radius: 4px 4px 0 0; }
+.autom-activity-ok { background: var(--autom-success); }
+.autom-activity-ko { background: var(--autom-danger); }
+.autom-activity-unloaded {
+    background: repeating-linear-gradient(135deg, transparent 0 6px, var(--autom-surface-sunken) 6px 8px);
+    align-items: center;
+}
+.autom-activity-na { writing-mode: vertical-rl; transform: rotate(180deg); }
+.autom-activity-labels { display: grid; grid-template-columns: repeat(14, minmax(0, 1fr)); gap: 0.4rem; text-align: center; padding-top: 0.2rem; white-space: nowrap; }
+.autom-activity-key { display: inline-flex; align-items: center; gap: 0.3rem; }
+.autom-activity-swatch { width: 0.7rem; height: 0.7rem; border-radius: 2px; display: inline-block; }
+
 /* ── Buttons ────────────────────────────────────────────────────────────── */
 .autom-btn {
     appearance: none; cursor: pointer; font: inherit; font-size: 0.8125rem; font-weight: 600;
@@ -282,8 +358,13 @@ export const AUTOM_CSS = `
 @keyframes autom-fade { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 .autom-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
 
+@container (max-width: 56rem) {
+    .autom-overview-grid { grid-template-columns: minmax(0, 1fr); }
+}
 @container (max-width: 34rem) {
     .autom-cal-day { min-height: 3.5rem; }
+    .autom-filter-label { min-width: auto; }
+    .autom-activity-labels span:nth-child(even) { visibility: hidden; }
     .autom-stat-value { font-size: 1.25rem; }
 }
 `;

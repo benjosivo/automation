@@ -99,3 +99,16 @@ export function sameDay(a: Date, b: Date): boolean {
 export function truncate(text: string, max: number): string {
     return text.length <= max ? text : `${text.slice(0, max)}…`;
 }
+
+/** "in 3 minutes", "2 hours ago" — through Intl, so both languages come for free.
+ *  Picks the largest unit that is at least one, which is what a reader expects of
+ *  a glance, not a precise figure. */
+export function relativeTime(date: Date, now: number, locale: string): string {
+    const format = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+    const seconds = Math.round((date.getTime() - now) / 1000);
+    const abs = Math.abs(seconds);
+    if (abs < 60) return format.format(seconds, 'second');
+    if (abs < 3600) return format.format(Math.round(seconds / 60), 'minute');
+    if (abs < 86_400) return format.format(Math.round(seconds / 3600), 'hour');
+    return format.format(Math.round(seconds / 86_400), 'day');
+}

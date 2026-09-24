@@ -17,9 +17,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { expandCron, isValidCron } from '../cron.js';
-import type { AutomSchedule, AutomTaskRun, TaskStatus } from '../types.js';
+import type { AutomSchedule, AutomTaskRun, TaskStatus, TriggerSource } from '../types.js';
 import Calendar, { type CalView } from './calendar.js';
 import { createClient, type ActiveRunMemory, type AutomationClient, type Fetcher } from './client.js';
+import FilterBar, { toggled } from './filters.js';
 import History from './history.js';
 import { LABELS, type Lang } from './i18n.js';
 import Overview from './overview.js';
@@ -29,9 +30,11 @@ import { injectAutomationStyles } from './styles.js';
 import Tasks from './tasks.js';
 import { ErrorState, Modal, Skeletons } from './ui.js';
 
-/** How many runs the dashboard holds at once. Large enough for a month of
- *  calendar and a useful history, small enough to stay one quick request. */
-const RUNS_WINDOW = 500;
+/** How many runs the dashboard holds at once. Sized for the fourteen days of
+ *  the activity chart at roughly a hundred runs a day, which is what the
+ *  pre-package page loaded too. Stays one quick request because GET /runs sends
+ *  only a 200-character preview of Output. */
+const RUNS_WINDOW = 2_000;
 const POLL_ACTIVE_MS = 8_000;
 /** The fallback cadence while something is actually running. Only reached when
  *  the event stream is unavailable — see useRunStream. */
@@ -89,6 +92,9 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
     const [calView, setCalView] = useState<CalView>('month');
     const [taskFilter, setTaskFilter] = useState<number | ''>('');
     const [statusFilter, setStatusFilter] = useState<TaskStatus | ''>('');
+    const [hiddenTasks, setHiddenTasks] = useState<ReadonlySet<number>>(new Set());
+    const [hiddenTriggers, setHiddenTriggers] = useState<ReadonlySet<TriggerSource>>(new Set());
+    const toggleTrigger = useCallback((source: TriggerSource) => setHiddenTriggers((current) => toggled(current, source)), []);
 
     const [runModal, setRunModal] = useState<AutomTaskRun | null>(null);
     const [scheduleModal, setScheduleModal] = useState<{ taskId: number; schedule?: AutomSchedule } | null>(null);
@@ -215,6 +221,28 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
         [data?.tasks],
     );
 
+    // The filter bar applies here, once, so every panel reads already-narrowed
+    // collections. `triggerRuns` skips the trigger filter: the overview breakdown
+    // keeps counting a hidden source so it can be switched back on.
+    const filtered = useMemo(() => {
+        if (!data) return null;
+        const taskShown = (id: number) => !hiddenTasks.has(id);
+        const runShown = (run: AutomTaskRun) => taskShown(run.Autom_Task_id) && !hiddenTriggers.has(run.TriggeredBy);
+        const triggerRuns = data.runs.filter((run) => taskShown(run.Autom_Task_id));
+        return {
+            triggerRuns,
+            data: {
+                tasks: data.tasks.filter((t) => taskShown(t.idAutom_Task)),
+                schedules: data.schedules.filter((s) => taskShown(s.Autom_Task_id)),
+                runs: triggerRuns.filter(runShown),
+                active: {
+                    db: data.active.db.filter(runShown),
+                    memory: data.active.memory.filter((run) => taskShown(run.taskId)),
+                },
+            } satisfies DashboardData,
+        };
+    }, [data, hiddenTasks, hiddenTriggers]);
+
     if (error && !data) {
         return (
             <div className="autom-root">
@@ -223,7 +251,7 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
         );
     }
 
-    if (!data) {
+    if (!data || !filtered) {
         return (
             <div className="autom-root">
                 <Skeletons count={4} />
@@ -231,8 +259,10 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
         );
     }
 
-    const panelProps = { data, actions, labels, locale: resolvedLocale, colorOf, busy };
-    const runningCount = data.active.db.length;
+    const panelProps = { data: filtered.data, actions, labels, locale: resolvedLocale, colorOf, busy };
+    const runningCount = filtered.data.active.db.length;
+    const windowFull = data.runs.length >= RUNS_WINDOW;
+    const oldestRun = data.runs[data.runs.length - 1];
 
     const TABS = [
         { id: 'overview', label: labels.tabOverview },
@@ -248,6 +278,16 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
                     {error}
                 </p>
             )}
+
+            <FilterBar
+                tasks={data.tasks}
+                hiddenTasks={hiddenTasks}
+                setHiddenTasks={setHiddenTasks}
+                hiddenTriggers={hiddenTriggers}
+                toggleTrigger={toggleTrigger}
+                colorOf={colorOf}
+                labels={labels}
+            />
 
             <div className="autom-tabs" role="tablist">
                 {TABS.map((entry) => (
@@ -265,7 +305,15 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
                 ))}
             </div>
 
-            {tab === 'overview' && <Overview {...panelProps} />}
+            {tab === 'overview' && (
+                <Overview
+                    {...panelProps}
+                    triggerRuns={filtered.triggerRuns}
+                    hiddenTriggers={hiddenTriggers}
+                    toggleTrigger={toggleTrigger}
+                    loadedSince={windowFull && oldestRun ? new Date(oldestRun.StartedAt) : null}
+                />
+            )}
             {tab === 'calendar' && <Calendar {...panelProps} anchor={anchor} setAnchor={setAnchor} view={calView} setView={setCalView} />}
             {tab === 'tasks' && <Tasks {...panelProps} />}
             {tab === 'history' && (
@@ -275,7 +323,7 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
                     setTaskFilter={setTaskFilter}
                     statusFilter={statusFilter}
                     setStatusFilter={setStatusFilter}
-                    windowFull={data.runs.length >= RUNS_WINDOW}
+                    windowFull={windowFull}
                     onRefresh={loadAll}
                 />
             )}

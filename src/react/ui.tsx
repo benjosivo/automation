@@ -22,9 +22,11 @@ export function Panel({ title, actions, children }: { title?: ReactNode; actions
     );
 }
 
-export function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
+/** `tone` draws the left edge in a status colour, so a tile that needs attention
+ *  stands out from the row before its figure is read. */
+export function Stat({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: 'good' | 'bad' | 'accent' }) {
     return (
-        <div className="autom-stat">
+        <div className={`autom-stat${tone ? ` autom-stat-${tone}` : ''}`}>
             <div className="autom-stat-label">{label}</div>
             <div className="autom-stat-value">{value}</div>
             {sub != null && <div className="autom-stat-sub">{sub}</div>}
