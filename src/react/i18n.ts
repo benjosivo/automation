@@ -7,6 +7,8 @@
  * is one object away — but nothing else in the package should grow a `lang`.
  */
 
+import type { TriggerSource } from '../types.js';
+
 export type Lang = 'en' | 'fr';
 
 export interface Labels {
@@ -28,6 +30,20 @@ export interface Labels {
     noFailures: string;
     progress: string;
     of: string;
+    next48h: string;
+    tomorrow: string;
+    activity: string;
+    last14Days: string;
+    succeeded: string;
+    failed: string;
+    notLoaded: string;
+    loadedSince: string;
+
+    filterTasks: string;
+    filterTriggers: string;
+    all: string;
+    none: string;
+    triggers: Record<TriggerSource, string>;
 
     run: string;
     running: string;
@@ -115,6 +131,20 @@ const en: Labels = {
     recentFailures: 'Recent failures',
     noFailures: 'No failures recorded.',
     of: 'of',
+    next48h: 'next 48 hours',
+    tomorrow: 'tomorrow',
+    activity: 'Activity',
+    last14Days: 'last 14 days',
+    succeeded: 'Succeeded',
+    failed: 'Failed',
+    notLoaded: 'not loaded',
+    loadedSince: 'Runs loaded since',
+
+    filterTasks: 'Tasks',
+    filterTriggers: 'Triggered by',
+    all: 'All',
+    none: 'None',
+    triggers: { scheduler: 'Scheduler', manual: 'Manual', api: 'API', dev: 'Dev' },
 
     run: 'Run',
     running: 'Running',
@@ -202,6 +232,20 @@ const fr: Labels = {
     recentFailures: 'Échecs récents',
     noFailures: 'Aucun échec enregistré.',
     of: 'sur',
+    next48h: 'prochaines 48 heures',
+    tomorrow: 'demain',
+    activity: 'Activité',
+    last14Days: '14 derniers jours',
+    succeeded: 'Réussies',
+    failed: 'Échouées',
+    notLoaded: 'non chargé',
+    loadedSince: 'Exécutions chargées depuis le',
+
+    filterTasks: 'Tâches',
+    filterTriggers: 'Déclenché par',
+    all: 'Toutes',
+    none: 'Aucune',
+    triggers: { scheduler: 'Planificateur', manual: 'Manuel', api: 'API', dev: 'Dev' },
 
     run: 'Exécuter',
     running: 'En cours',
