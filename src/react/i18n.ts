@@ -110,6 +110,7 @@ export interface Labels {
     loadError: string;
     retry: string;
     runnerUnreachable: string;
+    runnerOutdated: string;
 }
 
 const en: Labels = {
@@ -211,6 +212,7 @@ const en: Labels = {
     loadError: 'Could not load the automations.',
     retry: 'Retry',
     runnerUnreachable: 'The automation runner is unreachable. It may be stopped.',
+    runnerOutdated: 'The runner did not say which run it started: it runs a version of @benjosivo/automation older than this page. Update and restart it.',
 };
 
 const fr: Labels = {
@@ -312,6 +314,7 @@ const fr: Labels = {
     loadError: 'Impossible de charger les automatisations.',
     retry: 'Réessayer',
     runnerUnreachable: "Le runner d'automatisation est injoignable. Il est peut-être arrêté.",
+    runnerOutdated: "Le runner n'a pas indiqué quel run il a lancé : il utilise une version de @benjosivo/automation plus ancienne que cette page. Mettez-le à jour et redémarrez-le.",
 };
 
 export const LABELS: Record<Lang, Labels> = { en, fr };

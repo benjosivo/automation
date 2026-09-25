@@ -169,9 +169,11 @@ import { TaskTrigger } from '@benjosivo/automation/react';
 
 A button that starts the task named `name` (recorded as triggered by `api`), then shows its progress bar and current step while it runs, and its final status with the `Output` or the error once it ends. Several can share a page.
 
-It cannot be started twice. The button is disabled from the click until the run ends; on mount it follows a run of that task already in progress, whoever started it; and the runner answers 409 to a trigger for a running task, which is what holds when two tabs click in the same instant — the component then follows that run rather than showing an error.
+It cannot be started twice. The button is disabled from the click until the run ends; it follows a run of that task started elsewhere, whoever started it — on mount, and live while the page is open; and the runner answers 409 to a trigger for a running task, which is what holds when two tabs click in the same instant — the component then follows that run rather than showing an error.
 
-It polls `/runs/active` every second while it follows a run, and makes no request otherwise. Not the event stream: each instance would hold one, and browsers allow six connections per origin over HTTP/1.1. Polling also goes through `fetcher`.
+Progress comes from `GET /runs/events`, over **one `EventSource` per page and `apiBase`**, shared by every instance: one each would use up the six connections a browser allows per origin over HTTP/1.1. Past the trigger, a run costs one request — `GET /runs/:id`, for its `Output` once it ends. When the stream cannot open, which is what a host authenticating with an `Authorization` header gets (see below), the instance following a run polls `/runs/active` every 1.5 s through `fetcher` instead, and no longer sees runs started elsewhere until it is remounted.
+
+Against a runner older than 1.10.0, whose trigger answers without a `runId`, the component finds its run through the stream's `start` event, and says the runner must be updated when it cannot.
 
 It injects one stylesheet and reads every colour, font and radius from `--autom-*` custom properties whose defaults are declared on `:root`. Declare the same names on `.autom-root` to restyle it; a property set on the element beats one inherited from an ancestor, so the override wins whatever the stylesheet order. Under a CSP that forbids inline styles, import `AUTOM_CSS` and serve it yourself.
 
