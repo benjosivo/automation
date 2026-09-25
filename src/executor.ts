@@ -119,16 +119,24 @@ export interface ExecuteOptions {
     scheduleId?: number | null;
     triggeredBy: TriggerSource;
     attempt?: number;
+    /** Told once, as soon as it is known, whether this call started a run. The
+     *  API waits on it to answer a trigger with the run it created — or with why
+     *  none was, where the executor used to skip silently behind a 200.
+     *  Retries do not carry it: they belong to the run that failed. */
+    onStart?: (outcome: StartOutcome) => void;
 }
+
+export type StartOutcome = { runId: number } | { skipped: string };
 
 export async function executeTask(opts: ExecuteOptions): Promise<void> {
     const { taskId, scheduleId = null, triggeredBy, attempt = 1 } = opts;
+    const skip = (reason: string) => opts.onStart?.({ skipped: reason });
 
     // 1. Load task definition
     const task = await db.getTaskById(taskId);
     if (!task) {
         console.error(`[Executor] Task ${taskId} not found.`);
-        return;
+        return skip(`Task ${taskId} not found`);
     }
 
     // 2. Ownership. Schedules and the trigger queue are already scoped, so reaching
@@ -138,7 +146,7 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
     //    a nightly alert about a task that is not its business.
     if (task.Runner !== runner()) {
         console.log(`[Executor] Task "${task.Name}" belongs to runner "${task.Runner}", not "${runner()}" — skipping.`);
-        return;
+        return skip(`Task "${task.Name}" belongs to runner "${task.Runner}"`);
     }
 
     // 3. Check active flag — Redis first, fall back to DB
@@ -146,7 +154,7 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
     const isActive = redisActive !== null ? redisActive : task.isActive === 1;
     if (!isActive) {
         console.log(`[Executor] Task "${task.Name}" is inactive — skipping.`);
-        return;
+        return skip(`Task "${task.Name}" is inactive`);
     }
 
     // 4. Concurrency pre-check (best-effort, in-process only; step 6 is the atomic one)
@@ -158,7 +166,7 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
         });
         if (conflict) {
             console.log(`[Executor] Task "${task.Name}" skipped — concurrency group "${task.ConcurrencyGroup}" is locked.`);
-            return;
+            return skip(`Concurrency group "${task.ConcurrencyGroup}" is locked`);
         }
     }
 
@@ -171,7 +179,7 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
         if (!acquired) {
             await db.failTaskRun(runId, 'Skipped — concurrency group lock not acquired');
             console.log(`[Executor] Task "${task.Name}" lost lock race — skipped.`);
-            return;
+            return skip(`Concurrency group "${task.ConcurrencyGroup}" is locked`);
         }
     }
 
@@ -190,6 +198,7 @@ export async function executeTask(opts: ExecuteOptions): Promise<void> {
     };
     activeRuns.set(runId, activeRun);
     runEvents.emit('start', { runId, taskId, taskName: task.Name, attempt, startedAt: activeRun.startedAt });
+    opts.onStart?.({ runId });
 
     // 8. Start heartbeat and the Redis progress mirror
     const stopHeartbeat = redis.startHeartbeat(runId);

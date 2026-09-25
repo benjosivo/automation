@@ -8,6 +8,11 @@
  *
  *     <AutomationDashboard apiBase="/admin/api/automations" lang="fr" />
  *
+ * and, for a host's own pages, one button that starts a task and shows its
+ * progress:
+ *
+ *     <TaskTrigger apiBase="/admin/api/automations" name="importRecettes" lang="fr" />
+ *
  * `apiBase` points at wherever the host mounted createAutomationProxyRouter —
  * behind its own authentication, because the runner has none.
  *
@@ -23,6 +28,8 @@
 
 export { default as AutomationDashboard } from './AutomationDashboard.js';
 export type { AutomationDashboardProps } from './AutomationDashboard.js';
+export { default as TaskTrigger } from './TaskTrigger.js';
+export type { TaskTriggerProps } from './TaskTrigger.js';
 export type { Fetcher } from './client.js';
 export type { Lang } from './i18n.js';
 export { AUTOM_CSS, injectAutomationStyles } from './styles.js';

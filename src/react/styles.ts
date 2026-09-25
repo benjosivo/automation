@@ -290,6 +290,12 @@ export const AUTOM_CSS = `
 .autom-progress-unknown .autom-progress-bar { width: 35%; animation: autom-sweep 1.6s ease-in-out infinite; }
 @keyframes autom-sweep { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
 
+/* ── TaskTrigger ────────────────────────────────────────────────────────── */
+.autom-trigger { display: flex; flex-direction: column; align-items: flex-start; gap: 0.4rem; }
+.autom-trigger .autom-progress { width: 100%; }
+.autom-trigger-step { color: var(--autom-on-surface-muted); }
+.autom-trigger .autom-pre { width: 100%; max-height: 12rem; }
+
 /* ── Table ──────────────────────────────────────────────────────────────── */
 .autom-table-wrap { overflow-x: auto; }
 .autom-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }

@@ -98,6 +98,8 @@ The worker does not publish itself: it hands the payload to the runner, which pu
 
 Mounted under `/api` by `startAutomationServer`, plus an unauthenticated `/healthcheck`. `GET|PATCH /tasks/:id`, `POST /tasks/:id/trigger`, `POST /tasks/trigger-by-name/:name`, CRUD on `/schedules` (mutations hot-reload the cron registry — no restart), `POST /schedules/reload`, `GET /runs`, `GET /runs/:id`, `GET /runs/active`, `GET /runs/events`, `GET /runs/:id/progress`. Listing routes are runner-scoped; a task belonging to another runner answers `409`.
 
+`POST /tasks/:id/trigger` and `POST /tasks/trigger-by-name/:name` answer once the run row exists, with its `runId`, and **409 when no run was created**: the task is already running, inactive, or its concurrency lock is held, with the reason in `error`. Until 1.9.0 both answered 200 immediately and the executor skipped those cases silently, leaving the caller nothing to follow. "Already running" is refused for these two routes only, as a guard against a double click: a cron firing on top of a slow previous run behaves as it always has.
+
 `GET /api/health` lives inside the router, so a host that mounts or proxies it has a liveness probe; `/healthcheck` remains outside for the standalone server.
 
 `GET /runs/events` is a Server-Sent Events stream: a `snapshot` of what is running on connect, then `start`, `progress`, `log` and `end` as they happen. `GET /runs/:id/progress` answers the same state for one run, from memory while it runs and from Redis for ten minutes after, then `null`. A host that wraps the router in `compression()` **must exclude `/runs/events`** — compression buffers the stream, and no header from here turns that off.
@@ -156,6 +158,20 @@ The whole management surface as one component: statistics, running tasks, recent
 A running task shows a progress bar, its current step and its last log line, fed by `GET /runs/events`. **`EventSource` cannot carry a custom header, so `fetcher` does not apply to that connection**: a host authenticating with an `Authorization` header will only ever see `401` there. That is why the stream is not the only path — when it fails twice in a row without opening, the dashboard falls back to polling `/runs/active`, every 1.5 s while something is running and every 8 s otherwise. Nothing has to be configured either way; a cookie-based session works over the stream unchanged.
 
 While the stream is up, `progress` and `log` are applied with no request at all, and the full reload drops to one every five minutes. It is not there to keep up — it reconciles. An `EventSource` reconnects silently and the events emitted while it was away are gone, so the dashboard reloads on every reconnection, which is the moment state can have drifted. The five-minute timer then only catches what no event can describe: a direct `UPDATE` in MySQL. It matches the TTL of the Redis active flag, which is how long the runner itself takes to notice one.
+
+### One task, on a host's own page
+
+```tsx
+import { TaskTrigger } from '@benjosivo/automation/react';
+
+<TaskTrigger apiBase="/admin/api/automations" name="importRecettes" label="Importer" lang="fr" />
+```
+
+A button that starts the task named `name` (recorded as triggered by `api`), then shows its progress bar and current step while it runs, and its final status with the `Output` or the error once it ends. Several can share a page.
+
+It cannot be started twice. The button is disabled from the click until the run ends; on mount it follows a run of that task already in progress, whoever started it; and the runner answers 409 to a trigger for a running task, which is what holds when two tabs click in the same instant — the component then follows that run rather than showing an error.
+
+It polls `/runs/active` every second while it follows a run, and makes no request otherwise. Not the event stream: each instance would hold one, and browsers allow six connections per origin over HTTP/1.1. Polling also goes through `fetcher`.
 
 It injects one stylesheet and reads every colour, font and radius from `--autom-*` custom properties whose defaults are declared on `:root`. Declare the same names on `.autom-root` to restyle it; a property set on the element beats one inherited from an ancestor, so the override wins whatever the stylesheet order. Under a CSP that forbids inline styles, import `AUTOM_CSS` and serve it yourself.
 
