@@ -15,11 +15,11 @@ import { Router, type Request, type Response } from 'express';
 import cron from 'node-cron';
 import * as db from './db.js';
 import * as redis from './redis.js';
-import { executeTask, getActiveRuns, runEvents } from './executor.js';
+import { executeTask, getActiveRuns, runEvents, type StartOutcome } from './executor.js';
 import { reloadSchedule, reloadAllSchedules } from './scheduler.js';
 import { runner } from './config.js';
 import { isValidCron } from './cron.js';
-import type { ActiveRun } from './types.js';
+import type { ActiveRun, AutomTask, TriggerSource } from './types.js';
 
 export const router = Router();
 
@@ -118,6 +118,46 @@ async function ownedSchedule(res: Response, rawId: unknown) {
     return schedule;
 }
 
+/** Tasks whose trigger is between its request and its run's registration in
+ *  activeRuns. That window spans several awaits, and two clicks landing in it
+ *  would otherwise both pass the "already running" check below. */
+const starting = new Set<number>();
+
+/**
+ * Starts a run for an HTTP trigger and answers with it: `runId` once the run row
+ * exists, 409 when none was created — already running, inactive, lock held. The
+ * executor used to skip those silently behind a 200, leaving a caller with
+ * nothing to follow and no reason why.
+ *
+ * "Already running" is refused here rather than in the executor: it is a guard
+ * against a person clicking twice, and must not change what a cron does when it
+ * fires on top of a slow previous run.
+ */
+async function triggerRun(res: Response, task: AutomTask, triggeredBy: TriggerSource) {
+    const id = task.idAutom_Task;
+
+    // No await between the check and the add, so no other request can pass
+    // the check in between.
+    if (starting.has(id) || getActiveRuns().some((run) => run.taskId === id)) {
+        return fail(res, `Task "${task.Name}" is already running`, 409);
+    }
+    starting.add(id);
+
+    try {
+        // The run itself goes on after this answers; only its start is awaited.
+        const outcome = await new Promise<StartOutcome>((resolve, reject) => {
+            executeTask({ taskId: id, triggeredBy, onStart: resolve }).catch((err) => {
+                console.error(err);
+                reject(err); // a no-op once onStart has resolved
+            });
+        });
+        if ('skipped' in outcome) return fail(res, outcome.skipped, 409);
+        ok(res, { message: `Task "${task.Name}" triggered`, taskId: id, runId: outcome.runId });
+    } finally {
+        starting.delete(id);
+    }
+}
+
 // ─── Health ───────────────────────────────────────────────────────────────────
 
 /** Inside the router, unlike the standalone server's /healthcheck, so that a host
@@ -192,10 +232,7 @@ router.post('/tasks/:id/trigger', async (req: Request, res: Response) => {
 
         const triggeredBy = req.body?.triggeredBy === 'manual' || req.body?.triggeredBy === 'dev' ? (process.platform === 'win32' ? 'dev' : req.body?.triggeredBy) : 'api';
 
-        // Fire-and-forget — don't await, return immediately
-        executeTask({ taskId: task.idAutom_Task, triggeredBy }).catch(console.error);
-
-        ok(res, { message: `Task "${task.Name}" triggered`, taskId: task.idAutom_Task });
+        await triggerRun(res, task, triggeredBy);
     } catch (err: any) {
         fail(res, err.message, 500);
     }
@@ -210,8 +247,7 @@ router.post('/tasks/trigger-by-name/:name', async (req: Request, res: Response) 
         if (task.Runner !== runner()) {
             return fail(res, `Task "${task.Name}" belongs to runner "${task.Runner}" — trigger it on that runner.`, 409);
         }
-        executeTask({ taskId: task.idAutom_Task, triggeredBy: 'api' }).catch(console.error);
-        ok(res, { message: `Task "${task.Name}" triggered` });
+        await triggerRun(res, task, 'api');
     } catch (err: any) {
         fail(res, err.message, 500);
     }

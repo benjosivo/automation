@@ -27,6 +27,12 @@ export interface ActiveRunsPayload {
     memory: ActiveRunMemory[];
 }
 
+export interface TriggerResult {
+    message: string;
+    taskId: number;
+    runId: number;
+}
+
 const defaultFetcher: Fetcher = (url, init) => fetch(url, { credentials: 'same-origin', ...init });
 
 export function createClient(apiBase: string, fetcher: Fetcher = defaultFetcher) {
@@ -84,7 +90,12 @@ export function createClient(apiBase: string, fetcher: Fetcher = defaultFetcher)
 
         setTaskActive: (taskId: number, active: boolean) => send<{ updated: number }>('PATCH', `/tasks/${taskId}`, { isActive: active ? 1 : 0 }),
 
-        triggerTask: (taskId: number) => send<{ message: string }>('POST', `/tasks/${taskId}/trigger`, { triggeredBy: 'manual' }),
+        /** Answers once the run row exists. Throws with the runner's reason when
+         *  none was created: already running, inactive, concurrency lock held. */
+        triggerTask: (taskId: number) => send<TriggerResult>('POST', `/tasks/${taskId}/trigger`, { triggeredBy: 'manual' }),
+
+        /** Same, by Autom_Task.Name, recorded as triggered by 'api'. */
+        triggerTaskByName: (name: string) => send<TriggerResult>('POST', `/tasks/trigger-by-name/${encodeURIComponent(name)}`),
 
         createSchedule: (taskId: number, cronExpression: string, isActive: boolean) =>
             send<{ created: number }>('POST', '/schedules', { taskId, cronExpression, isActive: isActive ? 1 : 0 }),
