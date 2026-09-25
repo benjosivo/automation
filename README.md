@@ -167,7 +167,7 @@ import { TaskTrigger } from '@benjosivo/automation/react';
 <TaskTrigger apiBase="/admin/api/automations" name="importRecettes" label="Importer" lang="fr" />
 ```
 
-A button that starts the task named `name` (recorded as triggered by `api`), then shows its progress bar and current step while it runs, and its final status with the `Output` or the error once it ends. Several can share a page.
+A button that starts the task named `name` (recorded as triggered by `api`), then shows its progress bar and current step while it runs, and its final status with the `Output` or the error once it ends, until a ✕ closes them and leaves the bare button. Several can share a page.
 
 It cannot be started twice. The button is disabled from the click until the run ends; it follows a run of that task started elsewhere, whoever started it — on mount, and live while the page is open; and the runner answers 409 to a trigger for a running task, which is what holds when two tabs click in the same instant — the component then follows that run rather than showing an error.
 

@@ -265,6 +265,14 @@ export default function TaskTrigger({ apiBase, name, label, fetcher, lang = 'en'
     const busy = state.phase === 'starting' || state.phase === 'running';
     const progress = state.phase === 'running' ? state.progress : NOTHING_YET;
 
+    // Only offered once a run has settled: the run is let go of by then, so
+    // idle holds nothing the stream could still be updating.
+    const close = (
+        <button type="button" className="autom-btn autom-btn-ghost" onClick={() => setState({ phase: 'idle' })} aria-label={labels.close} title={labels.close}>
+            ✕
+        </button>
+    );
+
     return (
         <div className="autom-root autom-trigger">
             <button type="button" className="autom-btn autom-btn-primary" disabled={busy} onClick={start}>
@@ -286,12 +294,20 @@ export default function TaskTrigger({ apiBase, name, label, fetcher, lang = 'en'
 
             {state.phase === 'done' && (
                 <>
-                    <StatusChip status={state.status} />
+                    <div className="autom-trigger-head">
+                        <StatusChip status={state.status} />
+                        {close}
+                    </div>
                     {state.text && <pre className="autom-pre">{state.text}</pre>}
                 </>
             )}
 
-            {state.phase === 'error' && <p className="autom-note autom-note-error">{state.message}</p>}
+            {state.phase === 'error' && (
+                <div className="autom-trigger-head">
+                    <p className="autom-note autom-note-error">{state.message}</p>
+                    {close}
+                </div>
+            )}
         </div>
     );
 }

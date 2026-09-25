@@ -294,6 +294,7 @@ export const AUTOM_CSS = `
 .autom-trigger { display: flex; flex-direction: column; align-items: flex-start; gap: 0.4rem; }
 .autom-trigger .autom-progress { width: 100%; }
 .autom-trigger-step { color: var(--autom-on-surface-muted); }
+.autom-trigger-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.5rem; width: 100%; }
 .autom-trigger .autom-pre { width: 100%; max-height: 12rem; }
 
 /* ── Table ──────────────────────────────────────────────────────────────── */
