@@ -67,7 +67,6 @@ export const AUTOM_CSS = `
     color: var(--autom-on-surface);
     font-size: 0.875rem;
     line-height: 1.5;
-    container-type: inline-size;
 }
 .autom-root *, .autom-root *::before, .autom-root *::after { box-sizing: border-box; }
 .autom-root p, .autom-root h2, .autom-root h3, .autom-root h4 { margin: 0; }
