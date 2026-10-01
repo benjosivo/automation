@@ -20,7 +20,7 @@ import { expandCron, isValidCron } from '../cron.js';
 import type { AutomSchedule, AutomTaskRun, TaskStatus, TriggerSource } from '../types.js';
 import Calendar, { type CalView } from './calendar.js';
 import { createClient, type ActiveRunMemory, type AutomationClient, type Fetcher } from './client.js';
-import FilterBar, { toggled } from './filters.js';
+import FilterBar, { toggled, useStoredHiddenTasks } from './filters.js';
 import History from './history.js';
 import { LABELS, type Lang } from './i18n.js';
 import Overview from './overview.js';
@@ -92,7 +92,7 @@ export default function AutomationDashboard({ apiBase, fetcher, lang = 'en', loc
     const [calView, setCalView] = useState<CalView>('month');
     const [taskFilter, setTaskFilter] = useState<number | ''>('');
     const [statusFilter, setStatusFilter] = useState<TaskStatus | ''>('');
-    const [hiddenTasks, setHiddenTasks] = useState<ReadonlySet<number>>(new Set());
+    const [hiddenTasks, setHiddenTasks] = useStoredHiddenTasks(apiBase);
     const [hiddenTriggers, setHiddenTriggers] = useState<ReadonlySet<TriggerSource>>(new Set());
     const toggleTrigger = useCallback((source: TriggerSource) => setHiddenTriggers((current) => toggled(current, source)), []);
 
