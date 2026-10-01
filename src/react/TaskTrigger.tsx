@@ -26,63 +26,42 @@ import type { TaskStatus } from '../types.js';
 import { createClient, type ActiveRunMemory, type Fetcher } from './client.js';
 import { LABELS, type Lang } from './i18n.js';
 import { injectAutomationStyles } from './styles.js';
+import { openRunStream, type StreamHandlers } from './stream.js';
 import { ProgressBar, StatusChip } from './ui.js';
 
 /** Fallback cadence, only while the stream is down and a run is followed. */
 const POLL_MS = 1_500;
-/** EventSource reconnects on its own, so one error is a reconnection, not a
- *  fault. Two in a row without an open in between is an outage. */
-const STREAM_GIVE_UP = 2;
 
 // ─── One event stream per page ────────────────────────────────────────────────
 
-interface StreamListener {
-    event: (type: string, data: any) => void;
-    status: (open: boolean) => void;
-}
-
 interface SharedStream {
-    source: EventSource;
-    listeners: Set<StreamListener>;
+    close: () => void;
+    listeners: Set<StreamHandlers>;
     open: boolean;
 }
 
 const streams = new Map<string, SharedStream>();
 
 /** Joins the page's stream for this apiBase, opening it for the first listener
- *  and closing it after the last. A stream that gave up stays closed until then:
- *  its listeners poll meanwhile. */
-function subscribe(apiBase: string, listener: StreamListener): () => void {
-    const url = `${apiBase.replace(/\/+$/, '')}/runs/events`;
-    let shared = streams.get(url);
+ *  and closing it after the last. While it is down its listeners poll; it
+ *  reopens by itself. */
+function subscribe(apiBase: string, listener: StreamHandlers): () => void {
+    const key = apiBase.replace(/\/+$/, '');
+    let shared = streams.get(key);
 
     if (!shared) {
-        const created: SharedStream = { source: new EventSource(url, { withCredentials: true }), listeners: new Set(), open: false };
-        let failures = 0;
-
-        for (const type of ['snapshot', 'start', 'progress', 'end']) {
-            created.source.addEventListener(type, (message) => {
-                let data: unknown;
-                try {
-                    data = JSON.parse((message as MessageEvent).data);
-                } catch {
-                    return; // one malformed frame is not worth tearing the stream down for
-                }
+        const created: SharedStream = { close: () => {}, listeners: new Set(), open: false };
+        created.close = openRunStream(apiBase, ['snapshot', 'start', 'progress', 'end'], {
+            event: (type, data) => {
                 for (const l of created.listeners) l.event(type, data);
-            });
-        }
-        created.source.onopen = () => {
-            failures = 0;
-            created.open = true;
-            for (const l of created.listeners) l.status(true);
-        };
-        created.source.onerror = () => {
-            created.open = false;
-            for (const l of created.listeners) l.status(false);
-            if (++failures >= STREAM_GIVE_UP) created.source.close();
-        };
+            },
+            status: (open) => {
+                created.open = open;
+                for (const l of created.listeners) l.status(open);
+            },
+        });
 
-        streams.set(url, created);
+        streams.set(key, created);
         shared = created;
     }
 
@@ -93,8 +72,8 @@ function subscribe(apiBase: string, listener: StreamListener): () => void {
     return () => {
         joined.listeners.delete(listener);
         if (joined.listeners.size > 0) return;
-        joined.source.close();
-        streams.delete(url);
+        joined.close();
+        streams.delete(key);
     };
 }
 

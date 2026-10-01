@@ -107,9 +107,12 @@ export function createAutomationProxyRouter(options: AutomationProxyOptions): Ro
         } catch (err: any) {
             clearTimeout(deadline);
 
-            // The client left, or a stream it was reading ended with it. There is
-            // no longer a response to write a 502 into, and doing so throws.
-            if (res.writableEnded || res.headersSent || req.destroyed) return;
+            // The client left, or the runner went away mid-stream. There is no
+            // longer a response to write a 502 into, and doing so throws. Ending
+            // the one already started is what tells an EventSource to reconnect:
+            // left open, it would wait on a silent connection forever.
+            if (res.headersSent) return void res.end();
+            if (res.writableEnded || req.destroyed) return;
 
             // `err.message` alone is the string "fetch failed" — Node puts the useful
             // half in `err.cause` ("connect ECONNREFUSED 10.0.1.4:8500", "getaddrinfo

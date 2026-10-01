@@ -26,6 +26,7 @@ import { LABELS, type Lang } from './i18n.js';
 import Overview from './overview.js';
 import { hhmm, taskColor } from './format.js';
 import { busyKey, type DashboardActions, type DashboardData } from './shared.js';
+import { openRunStream } from './stream.js';
 import { injectAutomationStyles } from './styles.js';
 import Tasks from './tasks.js';
 import { ErrorState, Modal, Skeletons } from './ui.js';
@@ -59,9 +60,6 @@ const LOG_WINDOW = 200;
 /** Coalescing window for stream-triggered reloads. Five crons firing on the same
  *  minute are five `start` events and one reload. */
 const RESYNC_DEBOUNCE_MS = 400;
-/** EventSource reconnects on its own, so one error is a reconnection, not a
- *  fault. Two in a row without an open in between is an outage. */
-const STREAM_GIVE_UP = 2;
 
 export interface AutomationDashboardProps {
     /** Where the host mounted the automation proxy, without a trailing slash —
@@ -502,9 +500,6 @@ function useRunStream(apiBase: string, setData: Dispatch<SetStateAction<Dashboar
     useEffect(() => {
         if (typeof EventSource === 'undefined') return; // server-side render, or an old browser
 
-        let failures = 0;
-        const source = new EventSource(`${apiBase.replace(/\/+$/, '')}/runs/events`, { withCredentials: true });
-
         let resyncTimer: ReturnType<typeof setTimeout> | null = null;
         const resyncSoon = () => {
             if (resyncTimer) clearTimeout(resyncTimer);
@@ -524,56 +519,36 @@ function useRunStream(apiBase: string, setData: Dispatch<SetStateAction<Dashboar
                     : current,
             );
 
-        const on = (event: string, handle: (payload: any) => void) => {
-            const listener = (message: MessageEvent) => {
-                try {
-                    handle(JSON.parse(message.data));
-                } catch {
-                    // One malformed frame is not worth tearing the stream down for.
-                }
-            };
-            source.addEventListener(event, listener);
-            return () => source.removeEventListener(event, listener);
-        };
-
         // The first snapshot arrives beside the mount's own load, which covers the
         // same ground. Every later one is a reconnection, and those are the ones
         // that have events to make up for.
         let reconnected = false;
 
-        const detach = [
-            on('snapshot', (memory: ActiveRunMemory[]) => {
+        const handlers: Record<string, (payload: any) => void> = {
+            snapshot: (memory: ActiveRunMemory[]) => {
                 setData((current) => (current ? { ...current, active: { ...current.active, memory } } : current));
                 if (reconnected) resyncSoon();
                 reconnected = true;
-            }),
-            on('start', resyncSoon),
-            on('end', resyncSoon),
-            on('progress', (event) =>
+            },
+            start: resyncSoon,
+            end: resyncSoon,
+            progress: (event) =>
                 patch(event.runId, (run) => ({
                     ...run,
                     progress: { ...run.progress, percent: event.percent, step: event.step, current: event.current, total: event.total },
                 })),
-            ),
-            on('log', (event) =>
+            log: (event) =>
                 patch(event.runId, (run) => ({ ...run, progress: { ...run.progress, logs: [...run.progress.logs, event.line].slice(-LOG_WINDOW) } })),
-            ),
-        ];
+        };
 
-        source.onopen = () => {
-            failures = 0;
-            setStreaming(true);
-        };
-        source.onerror = () => {
-            setStreaming(false);
-            if (++failures < STREAM_GIVE_UP) return; // EventSource is reconnecting by itself
-            source.close();
-        };
+        const close = openRunStream(apiBase, Object.keys(handlers), {
+            event: (type, payload) => handlers[type](payload),
+            status: setStreaming,
+        });
 
         return () => {
             if (resyncTimer) clearTimeout(resyncTimer);
-            for (const off of detach) off();
-            source.close();
+            close();
             setStreaming(false);
         };
     }, [apiBase, setData, resync]);
