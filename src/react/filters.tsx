@@ -6,8 +6,12 @@
  * after the page loaded appears without anyone having to tick it. The filtering
  * itself happens once, in AutomationDashboard, before any panel sees the data —
  * a panel never has to know a filter exists.
+ *
+ * The hidden tasks survive a reload: they are kept in localStorage, keyed by
+ * apiBase because task ids only mean something within one runner's database.
  */
 
+import { useEffect, useState } from 'react';
 import type { AutomTask, TriggerSource } from '../types.js';
 import { TRIGGER_ICON } from './format.js';
 import type { Labels } from './i18n.js';
@@ -23,6 +27,30 @@ export interface FilterBarProps {
     toggleTrigger: (source: TriggerSource) => void;
     colorOf: (taskId: number) => string;
     labels: Labels;
+}
+
+function readHiddenTasks(key: string): Set<number> {
+    try {
+        const ids: unknown = JSON.parse(window.localStorage.getItem(key) ?? '[]');
+        return new Set(Array.isArray(ids) ? ids.filter((id): id is number => typeof id === 'number') : []);
+    } catch {
+        return new Set();
+    }
+}
+
+/** The hidden-task set, restored from and saved to the browser. Storage that is
+ *  missing or refuses (SSR, private mode, quota) only means nothing is remembered. */
+export function useStoredHiddenTasks(apiBase: string) {
+    const key = `autom:hiddenTasks:${apiBase}`;
+    const [hiddenTasks, setHiddenTasks] = useState<ReadonlySet<number>>(() => readHiddenTasks(key));
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(key, JSON.stringify([...hiddenTasks]));
+        } catch {
+            // Nothing to do: the filter still works for this page.
+        }
+    }, [key, hiddenTasks]);
+    return [hiddenTasks, setHiddenTasks] as const;
 }
 
 export function toggled<T>(set: ReadonlySet<T>, value: T): Set<T> {
