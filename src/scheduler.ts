@@ -30,7 +30,11 @@ export async function startScheduler(): Promise<void> {
         registerJob(schedule);
     }
 
-    console.log(`[Scheduler] ${jobs.size} schedule(s) registered.${process.platform === 'win32' ? ' (windows — cron disabled)' : ''}`);
+    console.log(
+        `[Scheduler] ${jobs.size} schedule(s) registered.${
+            process.env.NODE_ENV ? process.env.NODE_ENV !== 'production' : process.platform === 'win32' ? ' (dev — cron disabled)' : ''
+        }`,
+    );
 
     // Poll for on-demand triggers every 2 seconds
     startTriggerQueuePoller();
@@ -49,7 +53,7 @@ function registerJob(schedule: AutomSchedule): void {
         return;
     }
 
-    if (process.platform === 'win32') return;
+    if (process.env.NODE_ENV ? process.env.NODE_ENV !== 'production' : process.platform === 'win32') return;
 
     const job = cron.schedule(schedule.CronExpression, () => {
         console.log(`[Scheduler] Firing schedule #${schedule.idAutom_Schedule} for task #${schedule.Autom_Task_id}`);

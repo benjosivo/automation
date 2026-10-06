@@ -230,7 +230,14 @@ router.post('/tasks/:id/trigger', async (req: Request, res: Response) => {
         const task = await ownedTask(res, req.params.id);
         if (!task) return;
 
-        const triggeredBy = req.body?.triggeredBy === 'manual' || req.body?.triggeredBy === 'dev' ? (process.platform === 'win32' ? 'dev' : req.body?.triggeredBy) : 'api';
+        const triggeredBy =
+            req.body?.triggeredBy === 'manual' || req.body?.triggeredBy === 'dev'
+                ? process.env.NODE_ENV
+                    ? process.env.NODE_ENV !== 'production'
+                    : process.platform === 'win32'
+                      ? 'dev'
+                      : req.body?.triggeredBy
+                : 'api';
 
         await triggerRun(res, task, triggeredBy);
     } catch (err: any) {
